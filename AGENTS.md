@@ -41,7 +41,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.0，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.1，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
 | `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；4 个脚本请保留**：两个 `test-*.mjs`（断言回归）+ 两个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
@@ -50,7 +50,7 @@
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.15.0，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.15.1，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -190,6 +190,7 @@ await page.addScriptTag({ path: '...\\.playwright-mcp\\inject-body.js' });
 
 **显示语义**：复核失败**不把步骤判成 error**（数据已落库，报失败会诱导重跑 → 二次改标题），
 而是记为 done + 状态行「已保存 · 落库复核未通过 N/M 条」+ 红色 toast。
+模板两步（`noAssertion`）控制台只打印「N 条未核对」，**不打印「复核通过」**。
 
 ---
 
@@ -316,7 +317,7 @@ Select-String -Path "妙手采集箱助手.user.js" -Pattern "发布"  # 红线�
 
 # 改了 judgeSaved / attachVerify 就必须跑这两条（见 §8.1）
 node .playwright-mcp/test-judgesaved.mjs      # 19 例：6 该通过 + 13 该失败
-node .playwright-mcp/test-attachverify.mjs    # 6 例：失败优先 / 不可用 / 通过 / null / 截断
+node .playwright-mcp/test-attachverify.mjs    # 8 例：失败优先 / 不可用 / 通过 / null / 截断 / noAssertion
 node .playwright-mcp/make-inject.mjs          # 改了脚本就重跑，重建 inject-body.js
 ```
 

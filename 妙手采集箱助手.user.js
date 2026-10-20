@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         1.15.0妙手ERP · TEMU全托管采集箱 批量处理助手
+// @name         1.15.1妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.15.0
+// @version      1.15.1
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词条**只在点「立即更新」时**才整体替换。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.15.0';
+  const SCRIPT_VERSION = '1.15.1';
   const SEL_RADIO = '.el-radio, .jx-radio';
   const SEL_CHECKBOX = '.el-checkbox, .jx-checkbox';
 
@@ -1040,6 +1040,7 @@
     const after = await fetchItemInfoMap(ids);
     const failed = [];
     const notes = [];
+    let noAssertion = true;   // 只有每条都明确「无可断言目标」才算；缺一条（如接口没返回）就降级为 false
     ids.forEach((id) => {
       const b = selectionWatch.before.get(String(id)) || null;
       const a = after.get(String(id)) || null;
@@ -1047,15 +1048,23 @@
       // 这里不要再补一次 —— 否则同一商品会在错误列表里出现两次，数字虚高。
       const r = judgeSaved(stepId, b, a, ctx);
       if (r.note) notes.push(id + ': ' + r.note);
+      if (!r.noAssertion) noAssertion = false;
       if (!r.ok) failed.push({ id, why: r.why });
     });
-    return { checked: ids.length, failed, notes, unavailable: partial || undefined };
+    return {
+      checked: ids.length,
+      failed,
+      notes,
+      noAssertion: noAssertion && !failed.length,
+      unavailable: partial || undefined
+    };
   }
 
   /**
    * 把复核结果贴到步骤结果上。
    * 失败**不把步骤判成 error**（数据已落库，报失败会诱导重跑 → 二次改标题），
    * 而是挂一个 `verifyFail` 标记，由 runSequence 显示成「已保存 · 落库复核未通过 N/M 条」。
+   * `noAssertion`（模板两步）只记「未核对」，**不打印「复核通过」** —— 那两步没有可断言目标。
    */
   function attachVerify(result, vr, stepName) {
     const base = (result && typeof result === 'object') ? result : {};
@@ -1076,6 +1085,13 @@
           (vr.failed.length > 3 ? ' …' : '') +
           (vr.unavailable ? '（另注：' + vr.unavailable + '）' : '')
       };
+    }
+    // 没有可断言目标的步骤：如实说「未核对」，绝不能借「通过」二字制造假安心。
+    if (vr && vr.noAssertion) {
+      log(stepName + ' 落库复核：本步没有可断言的目标，' +
+        vr.checked + ' 条未核对（noAssertion，未做判定）' +
+        (vr.unavailable ? '（另注：' + vr.unavailable + '）' : ''));
+      return { ...base, verify: vr };
     }
     if (!vr || vr.unavailable) {
       // vr 缺失（理论上不该发生）也不能静默放过 —— 那等于「没复核」却毫无痕迹。
