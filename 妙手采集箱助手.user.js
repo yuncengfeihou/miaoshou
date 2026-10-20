@@ -1250,6 +1250,28 @@
       );
       await clickEl(opt, { wait: 2500 });
     }
+    /*
+     * 分页条数是硬前提（AGENTS.md §5.2）：**切完必须回读确认真的生效，才允许往下走**。
+     * 停在 20条/页 时「全选」只勾当前页那 20 条，其余商品会被静默漏掉，而面板照样报「成功 N/N」。
+     * 分页区压根不存在（列表没有分页）= 只有一页，放行。
+     */
+    if (document.querySelector('.pro-pagination')) {
+      try {
+        await waitFor(
+          () => {
+            const w = document.querySelector('.pro-pagination');
+            return w && (w.innerText || '').includes(CFG.pageSize) ? true : null;
+          },
+          { desc: '分页条数 ' + CFG.pageSize + ' 生效', timeout: 10000, interval: 200 }
+        );
+      } catch (e) {
+        if (e instanceof StopError) throw e;
+        throw new Error(
+          '分页条数没切到「' + CFG.pageSize + '」，已中止（否则「全选」只会勾到当前页）：当前分页区 = ' +
+          (((document.querySelector('.pro-pagination') || {}).innerText) || '').replace(/\s+/g, ' ').trim()
+        );
+      }
+    }
     // 全选。
     // 见 步骤.md §二 A（交互定位）：「全选」按钮是**切换型**（没有 is-checked 态可判断），
     // 已全部选中时再点一次会全部取消，
@@ -1684,23 +1706,31 @@
       );
     } catch (e) {
       if (e instanceof StopError) throw e;
-      // 展开失败（下拉已开但没找到选项 / 组件没响应）→ 收回并如实报告，不硬撑
+      // 下拉展不开 = 切不成 ⇒ 收回下拉并中止：不许按旧条数继续（分页条数是硬前提）
       closeDropdown(root);
-      warn('预览区条数下拉没展开，保持原值:', cur || '(未知)');
-      return cur;
+      throw new Error(
+        '预览区每页条数下拉没能展开（当前：' + (cur || '未知') + '），已中止：每页条数没确认成「' + want + '」，' +
+        '按旧条数继续只能覆盖第一页'
+      );
     }
 
     await clickEl(hit, { wait: 1200 });
     // 等值真的变了（el-select 选中后会重渲染，input 节点可能被替换 → 重新查）
+    const nowValue = () => (((root.querySelector('.el-pagination__sizes input') || {}).value) || '');
     try {
       await waitFor(
-        () => (root.querySelector('.el-pagination__sizes input') || {}).value === want,
+        () => (nowValue() === want ? true : null),
         { desc: '预览区条数生效', timeout: 6000, interval: 100 }
       );
     } catch (e) {
       if (e instanceof StopError) throw e;
+      // 切不成 ⇒ 中止，不能带着旧条数往下跑（否则只覆盖第一页）
+      throw new Error(
+        '预览区每页条数没切到「' + want + '」（当前：' + (nowValue() || '未知') + '），已中止：' +
+        '按旧条数继续只能覆盖第一页'
+      );
     }
-    return (root.querySelector('.el-pagination__sizes input') || {}).value || '';
+    return nowValue();
   }
 
   /**
@@ -1834,8 +1864,9 @@
     // 见 步骤.md §二 B（虚拟滚动与分页）：预览表自带「每页条数」下拉（el- 系，与列表页 jx- 系无关），
     // 默认 20 条/页。若不拉满，选中 >20 条时预览就会分页，而下面的滚动只扫当前页 →
     // 覆盖断言虽能拦住（不会写坏），但这一步等于跑不完。先把条数设成 500 再预览。
+    // 切不成会直接抛错；这里只在「控件不存在」时拿到空值，属单页情形
     const sizeSet = await setPreviewPageSize(dlg, '500条/页');
-    if (sizeSet && sizeSet !== '500条/页') warn('预览区条数未设成 500条/页（当前：' + sizeSet + '），多页时可能覆盖不全');
+    if (sizeSet) log('预览区每页条数:', sizeSet);
     // 必须清空「删除标题中」——该框有 BUG，不可使用
     const delBox = dlg.querySelector('input[placeholder*="请输入要删除的关键词"]');
     if (delBox && (delBox.value || '').trim()) {
@@ -1888,9 +1919,9 @@
     const previewPages = previewPageCount(dlg);
     if (previewPages > 1) {
       throw new Error(
-        '预览区仍有 ' + previewPages + ' 页（每页最多 500 条），说明本批选中数 ' +
-        (expected || '>500') + ' 条超过了预览的 500 条上限。本步只能单页整表扫描，' +
-        '请减少勾选数量（≤500 条）后重跑，已中止保存。'
+        '预览区仍是多页（' + previewPages + ' 页）：要么本批选中数 ' + (expected || '>500') +
+        ' 条超过了预览的 500 条上限，要么「每页条数」没生效。本步只能单页整表扫描，已中止保存 —— ' +
+        '把勾选数降到 ≤500 条后重跑；若勾选数远小于 500 仍报这个错，先查预览区的「每页条数」下拉。'
       );
     }
 
@@ -2457,7 +2488,7 @@
     /** 跳到第 n 页；返回是否确实切过去了（防死等） */
     const goPage = async (n) => {
       const p = pager();
-      if (!p) return false;
+      if (!p) return n === 1;   // 没有分页器 = 只有一页，第 1 页即当前页，不算「切不过去」
       if (currentPage() === n) return true;
       const li = [...p.querySelectorAll('.el-pager li.number, .el-pager li')]
         .find((x) => Number(textOf(x)) === n);
@@ -2512,8 +2543,11 @@
     // 逐页扫：每页反复扫到「一整趟零改动」（最多 4 趟/页，防页面异常时死循环）
     for (let pg = 1; pg <= pages; pg++) {
       if (!(await goPage(pg))) {
-        warn('颜色图第 ' + pg + ' 页切不过去，跳过（共 ' + pages + ' 页）');
-        continue;
+        // 切不过去 = 这一页的商品一个都不会被改 → 不能带着漏改去保存
+        throw new Error(
+          '颜色图第 ' + pg + ' 页切不过去（共 ' + pages + ' 页），已中止保存：' +
+          '这一页的颜色名不会被修改，继续保存等于漏改'
+        );
       }
       for (let k = 0; k < 4; k++) {
         const fixed = await sweep();
@@ -2563,7 +2597,11 @@
      * 这与第 6 步 sweepRows 的收敛思路一致，比「扫一趟就断言」稳。
      */
     for (let pg = 1; pg <= pages; pg++) {
-      if (!(await goPage(pg))) continue;
+      if (!(await goPage(pg))) {
+        throw new Error(
+          '颜色图复核阶段第 ' + pg + ' 页切不过去（共 ' + pages + ' 页），无法确认覆盖情况，已中止保存'
+        );
+      }
       if (!canScroll()) { scanPageForWrong(pg); continue; }
       for (let round = 0; round < 4; round++) {
         const before = coveredRows.size;
