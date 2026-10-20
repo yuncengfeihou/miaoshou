@@ -476,7 +476,7 @@
 
   /**
    * 元素是否真的渲染可见。
-   * 见 步骤.md §二 E（接口与数据）。Element Plus 的下拉/浮层用 <teleport> 传送到
+   * 见 步骤.md §二 E（接口与数据）：Element Plus 的下拉/浮层用 <teleport> 传送到
    * body 末尾且 position:fixed；这类元素 offsetParent === null，用 `offsetParent`
    * 做可见性判断会永远判为不可见（颜色图「选中全部」菜单就因此永远找不到，
    * 等待 20s 后超时卡死）。
@@ -743,10 +743,10 @@
    * 设计要点（均为实测结论，勿凭直觉改）：
    *
    * ① **范围必须来自页面自己发出的请求**，不能用 `selectedDetailIds()`。
-   *    实测：勾选 217 条时 `selectedDetailIds()` 只返回 **8** 条（它只读已渲染的虚拟滚动行），
-   *    靠滚动兜底最多也只能凑到 **176/217**。用它会「复核了 8 条却以为复核了 217 条」。
+   *    实测：勾选 217 条时 `selectedDetailIds()` 只返回 **6~8** 条（它只读已渲染的虚拟滚动行），
+   *    靠滚动兜底最多也只能凑到 **176/217**。用它会「只复核了那几条，却以为复核了 217 条」。
    *    而页面打开批量编辑时会**自己发一次** `getCollectItemInfoList`，body 里带**全部 217 个**
-   *    `detailIds[i]` —— 这就是权威且零额外请求的选中集来源（见 captureSelection）。
+   *    `detailIds[i]` —— 这就是权威且零额外请求的选中集来源（见 installSelectionWatcher）。
    *
    * ② **接口按 `fields[]` 裁剪返回**。实测只传 `fields[0]=title` 时，`sizeCharts` /
    *    `shopIdAndGoodsModelReqMap` / `saleAttributes` 全部**不返回**。所以复核必须**不传 fields[]**
@@ -965,7 +965,7 @@
         return { ok: true, note: '该步骤无可断言的落库目标（接口不暴露模板 id）', noAssertion: true };
       }
       default:
-        // 未知步骤 = 没有判据。绝不能默认通过（见 步骤.md §二 C「复核自己也会恒真通过」）。
+        // 未知步骤 = 没有判据。绝不能默认通过（见 步骤.md §二 C · 「复核」自己也会恒真通过）。
         return { ok: false, why: '没有为步骤「' + stepId + '」定义落库判据' };
     }
   }
@@ -1055,7 +1055,7 @@
   /**
    * 把复核结果贴到步骤结果上。
    * 失败**不把步骤判成 error**（数据已落库，报失败会诱导重跑 → 二次改标题），
-   * 而是挂一个 `verifyFail` 标记，由 runSequence 显示成「已保存 · 但复核未通过」。
+   * 而是挂一个 `verifyFail` 标记，由 runSequence 显示成「已保存 · 落库复核未通过 N/M 条」。
    */
   function attachVerify(result, vr, stepName) {
     const base = (result && typeof result === 'object') ? result : {};
@@ -2208,7 +2208,7 @@
    * （历史日志 `颜色已改为「混合色」: 2 / 4` 同一成因，当时误判成 placeholder 问题）。
    * 对策：**按可视区扫一遍 + 边扫边滚**，6–20 条已实测可全覆盖。
    *
-   * 同一主题的后半段（严格审查发现）：**光滚还不够** —— 这个面板 **有分页**，
+   * 同一节的后半段（§二 B，严格审查发现）：**光滚还不够** —— 这个面板 **有分页**，
    * 默认 `pageSize = 20`。实测 25 个商品时 `displayDetailList` 有 25 条，
    * 但列表 `scrollHeight` 只覆盖当前页 20 条 → 第 21 条起**根本滚不到、永远不渲染**，
    * 而且「复核」也只看当前页，于是 `stillWrong = 0` → 不 warn → 面板报成功。
