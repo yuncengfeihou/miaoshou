@@ -41,8 +41,9 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.2，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.16.0，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
+| `README.md` | 门面：安装 / 用法 / 三条红线 / 自检命令 / 当前版本变更摘要 |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
 | `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；8 个脚本请保留**：5 个 `test-*.mjs`（纯函数 + 虚拟滚动仿真覆盖）+ 1 个 `mutate-coverage.mjs`（变异验证）+ 2 个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
 
@@ -54,7 +55,7 @@
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.15.2，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.16.0，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -71,6 +72,7 @@
 | 设置区 | 三类模板下拉（自绘）+「读取模板列表」**三条链路各自直连**（失败自动回落开弹窗） |
 | 词库 | 只在点「立即更新」时才写，输入框不自动保存 |
 | 落库复核 | 每步保存后调接口核对结果（v1.15.0，见 §5.6） |
+| 等待策略 | v1.16.0：新判据一律「条件等待 + **连续两次采样成立**」(`waitStable`)，超时**抛错不吞**；提速只来自去掉空等 |
 | 版本检测 | 每次刷新比对 GreasyFork `/scripts/600852.json`，不一致显示「更新」 |
 
 **版本演进不在此记录。** 想知道某处为什么这样写，按主题查 `步骤.md` §二 A–E（落库复核见 §二 C 与 §5.6）。
@@ -84,12 +86,13 @@
 3. **第 1 个商品的颜色图有重复**（历史遗留，用户明确**暂不清理**）。要修得在颜色图面板手工删图。
 4. **`productTpl` / `skuTpl` 两步没有可断言的落库目标** —— 接口不暴露模板 id，判据只标
    `noAssertion`、不做前后比对（见 §5.6）。
-5. **两处「漏改却报成功」的缺口（2026-10-20 审查报告 §10.3 发现，尚未修）**：
-   ① `stepTitle` 的 `expected === 0` 只 `warn` 不抛错 → **覆盖断言整段被跳过**；
+5. **两处「漏改却报成功」的缺口（`审查报告.md` §三 T1 / §四 T2）**：
+   ① `stepTitle` 的 `expected === 0` 只 `warn` 不抛错 → **覆盖断言整段被跳过**。
+      **v1.16.0 已修**（改抛错）：用例从 KNOWN 转正为 `test-title-coverage.mjs` 第 8 例，
+      `mutate-coverage.mjs` 的 M7 专测它。
    ② `setAllColors` 的 `goPage` 失败只 `warn` + `continue` → **整页漏改不进 `wrongRows`**。
-   两者都已用仿真回归定住（`test-title-coverage.mjs` / `test-color-coverage.mjs` 的 KNOWN 用例）。
-   可达性：① 仅在 `expected` 读不到时（§10.10 实测正常可读到 `expected=1`）；
-   ② 仅在「勾选 >500 条」或「设 500条/页 失败」时（≤500 条的日常工作量走不到）。
+      **仍未修**（`test-color-coverage.mjs` 的 KNOWN 用例）；但正常业务量走不到 ——
+      「未发布」≤400 条、每个分页入口先切 500 条/页 → `pages === 1`。
 
 ---
 
@@ -152,7 +155,7 @@ await page.addScriptTag({ path: '...\\.playwright-mcp\\inject-body.js' });
 
 > ⚠ **别在这上面过度设计。** 500 条/页是页面硬上限，「未发布」上限 ≈400 条，
 > 且每个分页入口都会先切到 500 —— 所以「勾选 >500 条」和「20 条/页时跨页」
-> **正常使用中不会出现**。想让脚本更稳，去修真正的静默失败（`审查报告.md` 的 T1–T6），
+> **正常使用中不会出现**。想让脚本更稳，去修真正的静默失败（`审查报告.md` §二 / §三 的 T4 / T6 / R1 / T1），
 > 不要把时间花给这些不可达分支加防护，也不要为它们改动现有判据。
 
 ### 5.3 三份模板清单互不派生
@@ -218,6 +221,8 @@ makeTitleBuilder 标题改写纯函数（预览改写与落库复核共用同一
 
 基础工具          sleep(可打断) / waitFor / findByText / isVisible / clickEl
                   setNativeValue(原生 setter，绕 Vue 受控) / readAndCloseResultDialog
+等待工具          waitStable(条件成立且连续两次采样成立才返回，超时抛错)
+                  previewReady(预览表最后一列已填) / waitSizeTemplateSelect(尺码表下拉就绪)
 
 未发布守卫        collectStatusTabs / filterNameOfTab / currentCollectFilter
                   unpublishedTab / ensureUnpublishedFilter / assertUnpublishedOnly
@@ -309,7 +314,7 @@ git -c http.proxy=http://127.0.0.1:7897 push  origin main
 
 ### 入库范围
 
-**入库**：`妙手采集箱助手.user.js`（交付物）、`AGENTS.md`、`步骤.md`、`审查报告.md`、
+**入库**：`妙手采集箱助手.user.js`（交付物）、`README.md`、`AGENTS.md`、`步骤.md`、`审查报告.md`、
 `.playwright-mcp/` 下 **8 个脚本**（5 个 `test-*.mjs` + `mutate-coverage.mjs` + 2 个 `make-inject*.mjs`，共约 47 KB）。
 这 8 个脚本是唯一能验证「前置条件崩了会不会静默成功」的手段 —— 真网页跑不出这些分支（未发布只有个位数条、
 `goPage` 不会按需失败、变异测试要改源码），只有真网页能验选择器与渲染时序。**两者互补，不可替代**。
@@ -347,9 +352,9 @@ Select-String -Path "妙手采集箱助手.user.js" -Pattern "发布"  # 红线�
 node .playwright-mcp/test-judgesaved.mjs      # 19 例：6 该通过 + 13 该失败
 node .playwright-mcp/test-attachverify.mjs    # 8 例：失败优先 / 不可用 / 通过 / null / 截断 / noAssertion
 node .playwright-mcp/test-settings.mjs        # 7 例：knownTemplates 只迁移一次、不写回/回灌
-node .playwright-mcp/test-title-coverage.mjs  # 7 例 + 1 KNOWN：虚拟滚动覆盖/收敛（不需真实弹窗）
+node .playwright-mcp/test-title-coverage.mjs  # 8 例：虚拟滚动覆盖/收敛 + expected 读不到必须抛错
 node .playwright-mcp/test-color-coverage.mjs  # 3 例 + 2 KNOWN：颜色图分页遍历/翻页失败
-node .playwright-mcp/mutate-coverage.mjs      # 7 变异：证明上面两个不是恒真
+node .playwright-mcp/mutate-coverage.mjs      # 8 变异：证明上面两个不是恒真（M7 专测 T1）
 node .playwright-mcp/make-inject.mjs          # 改了脚本就重跑，重建 inject-body.js
 ```
 

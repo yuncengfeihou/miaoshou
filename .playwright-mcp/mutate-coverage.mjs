@@ -53,6 +53,12 @@ const TITLE = [
     to: '/* mutated */',
     expectFail: /20 条正常|100 条/,
   },
+  {
+    name: 'M7 T1 回退（expected===0 不再抛错）',
+    from: 'if (expected === 0) {',
+    to: 'if (false && expected === 0) {',
+    expectFail: /expected 读不到/,
+  },
 ];
 
 function runSuite(suiteFile, target) {

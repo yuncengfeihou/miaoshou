@@ -267,9 +267,10 @@ async function main() {
     results.push(check('5 条已是目标值：不应重复写入（幂等）', r,
       (x) => !x.error && x.writes.length === 0));
   }
-  { // 8 【报告未覆盖】expected 读不到（=0）时，覆盖断言被整段跳过
+  { // 8 expected 读不到（=0）：覆盖断言不能整段跳过 —— 必须抛错（审查报告.md §三 T1）
     const r = await runStepTitle({ items: mkItems(40), words: WORDS, prefix: PREFIX, stopAtFraction: 0.3, hideTotal: true });
-    KNOWN_DEFECT('expected 读不到 + 只滚 30%：覆盖断言被整段跳过（脚本缺陷）', r, (x) => !!x.error);
+    results.push(check('expected 读不到 + 只滚 30%：必须抛「读不到预览区总条数」', r,
+      (x) => !!x.error && /读不到预览区总条数/.test(x.error)));
   }
 
   if (known.length) console.log(`\n⚠ 下面这些缺陷看起来已被修复，请转成正式用例：\n  - ` + known.join('\n  - '));

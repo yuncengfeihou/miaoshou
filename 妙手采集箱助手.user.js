@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.15.2
+// @version      1.16.0
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词条**只在点「立即更新」时**才整体替换。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.15.2';
+  const SCRIPT_VERSION = '1.16.0';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -505,6 +505,31 @@
     }
     throw new Error('等待超时: ' + (desc || fn.toString().slice(0, 60)));
   }
+  /**
+   * 等条件成立，并且**连续 `times` 次采样都成立**才返回（默认 2 次 / 间隔 200ms）。
+   *
+   * 为什么不只看一次：页面的中间态（面板刚换骨架、列表切到一半、只渲染了第一行）
+   * 会让单次采样为真而实际还没就绪。见 审查报告.md §二 T6 / §三 R1。
+   * 代价是固定多等 (times - 1) * interval（默认 200ms），换的是可预测性 ——
+   * 宁可多等 200ms，也不要拿一个「刚好那一刻为真」的状态往下跑。
+   */
+  async function waitStable(fn, { times = 2, interval = 200, timeout = 15000, desc = '' } = {}) {
+    const t0 = Date.now();
+    let hits = 0;
+    while (Date.now() - t0 < timeout) {
+      if (stopRequested) throw new StopError();
+      let v = null;
+      try { v = fn(); } catch (_) { v = null; }
+      if (v) {
+        hits += 1;
+        if (hits >= times) return v;
+      } else {
+        hits = 0;
+      }
+      await sleep(interval);
+    }
+    throw new Error('等待超时: ' + (desc || '条件未稳定') + '（要求连续 ' + times + ' 次成立）');
+  }
 
   /** 按可见文本找按钮/元素 */
   function findByText(selector, text, { exact = false, root = document } = {}) {
@@ -607,6 +632,41 @@
    *
    * @returns {Promise<{from:string, to:string, switched:boolean}>}
    */
+  /**
+   * 列表页的「总数文本 / 总数数字 / 首屏行 id」—— 用来判断列表是否真的换了筛选。
+   * 见 审查报告.md §三 R1：页签选中态 36–65ms 就变，列表数据 256–450ms 才换。
+   */
+  function listSignature() {
+    const totalEl = document.querySelector('.jx-pagination__total') ||
+      document.querySelector('.pro-pagination__left');
+    const totalText = textOf(totalEl);
+    const m = totalText.match(/(\d[\d,]*)\s*条/);
+    const rowIds = [...document.querySelectorAll(
+      '.pro-virtual-scroll__row.pro-virtual-table__row div.shop-item[collectboxdetailid]'
+    )].map((d) => d.getAttribute('collectboxdetailid')).filter(Boolean);
+    return {
+      totalText,
+      totalCount: m ? Number(String(m[1]).replace(/,/g, '')) : null,
+      rowIds,
+    };
+  }
+
+  /** 两份列表指纹是否相同（总数文本 + 行 id 序列） */
+  function sameSignature(a, b) {
+    if (!a || !b) return false;
+    return a.totalText === b.totalText &&
+      a.rowIds.length === b.rowIds.length &&
+      a.rowIds.every((id, i) => id === b.rowIds[i]);
+  }
+
+  /** 页签文本里括号中的计数（`未发布 (6)` → 6）；读不到返回 null */
+  function tabCountOfUnpublished() {
+    const t = unpublishedTab();
+    if (!t) return null;
+    const m = textOf(t).match(/[（(]\s*([\d,]+)\s*[)）]/);
+    return m ? Number(String(m[1]).replace(/,/g, '')) : null;
+  }
+
   async function ensureUnpublishedFilter(stepName) {
     const before = currentCollectFilter();
     if (before === '未发布') return { from: before, to: before, switched: false };
@@ -622,16 +682,45 @@
     }
 
     log('筛选不是「未发布」（当前：' + (before || '未知') + '），正在自动切换…');
+    const sigBefore = listSignature();
     // 点内部 span：label 被 input 覆盖时点 label 本体可能只聚焦不触发
     const hit = tab.querySelector('.jx-radio-button__inner, .el-radio-button__inner') || tab;
     await clickEl(hit, { wait: 600 });
 
-    // 等它真的切过去（30s 上限：列表要重新拉数据）
-    await waitFor(
-      () => (currentCollectFilter() === '未发布' ? true : null),
-      { desc: '切换到「未发布」筛选', timeout: 30000, interval: 200 }
+    /*
+     * 见 审查报告.md §三 R1（真机实测）：页签选中态 **36–65ms** 就变，而列表数据要
+     * **256–450ms** 才换 —— 中间 190–410ms 里「页签写着未发布、屏幕上还是上一个筛选的行」。
+     * 老实现只等 `currentCollectFilter()`，随后就可能对着旧行点「全选」。
+     * 现在要求四条同时成立、且**连续两次采样都成立**（`waitStable`，固定 +200ms）才放行：
+     *   ① 页签 = 未发布
+     *   ② 分页区总数读得到，且（页签计数读得到时）与之一致
+     *   ③ 列表指纹与切换前不同（总数文本 / 行 id 变了）
+     *   ④ ②③ 连续两次采样一致（防中间态）
+     * 读不到证据就继续等，超时抛错 —— 不放行。
+     */
+    await waitStable(
+      () => {
+        if (currentCollectFilter() !== '未发布') return null;
+        const sig = listSignature();
+        if (sig.totalCount == null) return null;                              // 分页区还没渲染出来
+        const tabCount = tabCountOfUnpublished();
+        if (tabCount != null && sig.totalCount !== tabCount) return null;     // 与页签计数不符
+        if (sameSignature(sig, sigBefore)) return null;                       // 还是切换前那份列表
+        return sig;
+      },
+      { desc: '切换到「未发布」并等列表重载', timeout: 30000, interval: 200 }
     );
-    log('已切换到「未发布」筛选');
+
+    const after = listSignature();
+    // 空列表当场说明，别留到第 2 步点完「全选」再 20s 超时
+    if (after.totalCount === 0) {
+      throw new Error(
+        (stepName ? '【' + stepName + '】' : '') +
+        '已切到「未发布」，但该列表是 0 条，没有可处理的产品。' +
+        '请先在妙手后台确认「未发布」里确实有产品，再重跑。'
+      );
+    }
+    log('已切换到「未发布」筛选（' + after.totalText + '）');
     return { from: before || '未知', to: '未发布', switched: true };
   }
 
@@ -1630,24 +1719,45 @@
     return total > 0 ? Math.max(1, Math.ceil(total / per)) : 1;
   }
   /**
-   * 点「预览」并等预览行真的渲染出来（条件等待，不再盲等 1500ms）。
-   * 见 步骤.md §二 B（虚拟滚动与分页）：实测点「预览」→ 预览行出现只要 **约 53ms**，
-   * 老实现 clickEl(1500) + sleep(800) 白等 2.25s，各步累计就是十几秒的黏滞感。
+   * 预览区（表头含「编辑后」的那张表）里是否已经有内容。
    *
-   * ⚠ 判据必须是「**带 textarea 的**预览行」：实测在同一弹窗里切字段时，
-   * 新字段会先渲染出一排**空骨架行**（`.jx-pro-virtual-table__row` 已在、textarea 还没有，
-   * 持续约 1s 以上）。若只判断 row 存在，就会立刻拿旧字段的骨架继续往下走。
+   * 见 审查报告.md §二 T6（真机实测）：
+   *  · 标题 / 英语标题的预览行里带 textarea；
+   *  · **尺码表 / 模特信息的预览是纯文本行，没有 textarea** —— 老判据在这两步恒假，
+   *    于是每步白等 20s 再被 `.catch` 吞掉（全链约 40s 是空的）；
+   *  · 真正的差异在最后一列：点预览前是空，点完后填上 `同步 编辑 预览` /
+   *    `jieday: 添加模特`（实测 55ms / 54ms）。
+   *
+   * ⚠ 必须限定在**预览表**内：「编辑表」的行也用 `.jx-pro-virtual-table__row`
+   * （尺码表编辑表表头是 类目/尺码表模板，模特信息是 店铺/成衣模特），
+   * 而模特信息的编辑行在点预览**之前**最后一格就有内容 → 不限定范围会恒真。
+   * 预览表的判据是表头含「编辑后」。
+   */
+  function previewReady(dlg) {
+    if (!dlg) return false;
+    const tables = [...dlg.querySelectorAll('.jx-pro-virtual-table')];
+    const pt = tables.find(
+      (t) => /编辑后/.test(textOf(t.querySelector('.jx-pro-virtual-table__header') || {}))
+    ) || dlg;
+    return [...pt.querySelectorAll('.jx-pro-virtual-table__row')].some((r) => {
+      const cells = r.querySelectorAll('.jx-pro-virtual-table__row-cell');
+      const last = cells[cells.length - 1];
+      return !!(last && (last.querySelector('textarea') || textOf(last)));
+    });
+  }
+
+  /**
+   * 点「预览」并等预览结果真的渲染出来。
+   *
+   * 见 审查报告.md §二 T6：判据从「行内 textarea」改成「预览表最后一列已填」，
+   * 并且要**连续两次采样都成立**（`waitStable`，固定 +200ms）才放行，避免拿到中间态。
+   * 超时**抛错**，不再用 `.catch` 吞 —— 预览没出来就保存，多半等于什么都没改。
    */
   async function clickPreview(dlg) {
     const btn = [...dlg.querySelectorAll('button')].find((b) => textOf(b) === '预览');
     if (!btn) throw new Error('未找到「预览」按钮');
     await clickEl(btn, { wait: 80 });
-    // 等预览真的渲染出可编辑行（首屏；后续翻页/滚动由各步骤自行处理）
-    await waitFor(
-      () => dlg.querySelector('.jx-pro-virtual-table__row textarea') ||
-            (!dlg.querySelector('.jx-pro-virtual-table__row') && dlg.querySelector('textarea')),
-      { desc: '预览结果', timeout: 20000, interval: 120 }
-    ).catch((e) => { if (e instanceof StopError) throw e; });
+    await waitStable(() => previewReady(dlg), { desc: '预览结果', timeout: 15000, interval: 200 });
   }
 
   /**
@@ -1675,7 +1785,39 @@
     if (!box) throw new Error('未找到「使用新英语标题」输入框');
     await clickEl(box, { wait: 200 });
     setNativeValue(box, ' ');
-    await sleep(400);
+
+    /*
+     * 见 审查报告.md §三 P2-4：`setNativeValue` 是绕受控组件的写法，正常有效，
+     * 但若面板重渲染把值回滚，老实现完全察觉不到 → 预览是空、保存成功、标题却没清空。
+     * 这里读回确认；第一次失败重写一次；两次都不行就抛错（宁可停，不要静默落库）。
+     * 判据放宽到「任意非空空白字符」：页面若把空格换成 NBSP 之类，也不该误判成失败。
+     */
+    const enTitleWritten = () => {
+      const v = String(box.value == null ? '' : box.value);
+      return v.length > 0 && v.trim() === '';
+    };
+    let enOk = false;
+    try {
+      await waitFor(() => enTitleWritten(),
+        { desc: '「使用新英语标题」写入生效', timeout: 3000, interval: 80 });
+      enOk = true;
+    } catch (e) {
+      if (e instanceof StopError) throw e;
+    }
+    if (!enOk) {
+      setNativeValue(box, ' ');
+      try {
+        await waitFor(() => enTitleWritten(),
+          { desc: '「使用新英语标题」写入生效（重试）', timeout: 3000, interval: 80 });
+      } catch (e) {
+        if (e instanceof StopError) throw e;
+        throw new Error(
+          '「使用新英语标题」输入框写不进目标值（期望单个空格，实际 ' +
+          JSON.stringify(String(box.value == null ? '' : box.value)) + '），已中止保存'
+        );
+      }
+    }
+    await sleep(300);
     await clickPreview(dlg);
     const res = await clickSave(dlg);
     // 落库复核：接口里 multiLanguageTitleMap.en 必须是单个空格
@@ -1949,7 +2091,13 @@
       );
     }
     if (expected === 0) {
-      warn('读不到预览总条数，无法做覆盖断言（已写入 ' + count + ' 行，覆盖 ' + got + ' 行）');
+      // 见 审查报告.md §三 T1：「读不到总条数」= 覆盖断言整段失效 —— 只剩
+      // blank / unsel / stillWrong（都只看已扫到的行），扫不到的行永远不报警。
+      // 与第 2 步「读不到 `已选 N/M` 就抛错」同一口径：拿不到证据就不许通过。
+      throw new Error(
+        '读不到预览区总条数（`.el-pagination__total`），无法确认覆盖了哪些行，已中止保存：' +
+        '已写入 ' + count + ' 行、覆盖 ' + got + ' 行'
+      );
     }
 
     // 落库复核：按「编辑前原文」算出的期望值逐条比对接口里的 title。
@@ -1970,11 +2118,37 @@
    * 见 步骤.md §二 E（接口与数据）：该下拉的选中值同样不在 input.value，必须读 `.jx-select__placeholder`。
    * 见 步骤.md §二 A（交互定位）：下拉里可能只有「暂未创建模板，请创建模板后再引用」这类提示 li，不能当成模板名。
    */
+  /**
+   * 等「尺码表模板」下拉出现并返回它（等不到返回 null）。
+   *
+   * 见 审查报告.md §二 T4（真机实测）：冷启动时弹窗被 `batchEditDialog()` 识别之后，
+   * `.size-template-select` 还要 **约 225ms** 才渲染；老实现「拿到弹窗就 querySelector」
+   * → 逐条点第 7 步必然报「未找到尺码表模板选择框」。
+   *
+   * ⚠ 兜底选择器 `.el-select.jx-pro-select` 必须放在**等待之后**：实测切到尺码表**之前**
+   * （弹窗还停在标题面板）它就已经命中，放前面等于等了个不相关的下拉。
+   */
+  async function waitSizeTemplateSelect(dlg) {
+    let hit = null;
+    try {
+      hit = await waitFor(() => dlg.querySelector('.size-template-select'),
+        { desc: '尺码表模板选择框', timeout: 15000, interval: 100 });
+    } catch (e) {
+      if (e instanceof StopError) throw e;
+      hit = null;
+    }
+    if (hit) return hit;
+    const generic = dlg.querySelector('.el-select.jx-pro-select');
+    if (generic) warn('没等到 `.size-template-select`，退回通用下拉 `.el-select.jx-pro-select`');
+    return generic;
+  }
+
   async function stepSizeChart() {
     const dlg = await openBatchEdit('尺码表');
 
-    const selectEl = dlg.querySelector('.size-template-select') ||
-      dlg.querySelector('.el-select.jx-pro-select');
+    // 见 审查报告.md §二 T4：冷启动时弹窗被识别后，`.size-template-select` 还要约 225ms 才渲染。
+    // 老实现「拿到弹窗就 querySelector」→ 逐条点第 7 步必报「未找到尺码表模板选择框」。
+    const selectEl = await waitSizeTemplateSelect(dlg);
     if (!selectEl) throw new Error('未找到尺码表模板选择框');
 
     // 设置里选中的尺码表模板直接生效（空＝跟随下拉第一个选项；没有开关，也不回落 CFG）
