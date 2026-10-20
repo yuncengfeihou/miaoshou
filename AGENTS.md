@@ -44,7 +44,7 @@
 | `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.2，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
-| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；5 个脚本请保留**：三个 `test-*.mjs`（断言/迁移回归）+ 两个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
+| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；8 个脚本请保留**：5 个 `test-*.mjs`（纯函数 + 虚拟滚动仿真覆盖）+ 1 个 `mutate-coverage.mjs`（变异验证）+ 2 个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
 
 > **`@name` 从 2026-10-20 起固定不带版本号**：版本只由 `@version` / `SCRIPT_VERSION` 表达。
 > 若 TM 里还留着旧 `@name`（带 `1.15.x` 前缀）的条目，升级后请删除；否则 TM 会把它当成另一个脚本，
@@ -84,6 +84,12 @@
 3. **第 1 个商品的颜色图有重复**（历史遗留，用户明确**暂不清理**）。要修得在颜色图面板手工删图。
 4. **`productTpl` / `skuTpl` 两步没有可断言的落库目标** —— 接口不暴露模板 id，判据只标
    `noAssertion`、不做前后比对（见 §5.6）。
+5. **两处「漏改却报成功」的缺口（2026-10-20 审查报告 §10.3 发现，尚未修）**：
+   ① `stepTitle` 的 `expected === 0` 只 `warn` 不抛错 → **覆盖断言整段被跳过**；
+   ② `setAllColors` 的 `goPage` 失败只 `warn` + `continue` → **整页漏改不进 `wrongRows`**。
+   两者都已用仿真回归定住（`test-title-coverage.mjs` / `test-color-coverage.mjs` 的 KNOWN 用例）。
+   可达性：① 仅在 `expected` 读不到时（§10.10 实测正常可读到 `expected=1`）；
+   ② 仅在「勾选 >500 条」或「设 500条/页 失败」时（≤500 条的日常工作量走不到）。
 
 ---
 
@@ -129,7 +135,7 @@ await page.addScriptTag({ path: '...\\.playwright-mcp\\inject-body.js' });
 
 | 目标 | 结论 | 验证方式 |
 |---|---|---|
-| 分页条数 | `.pro-pagination .jx-select__input`；当前值在 `innerText`（`500条/页`），**不在 input.value** | 真实页面打印 DOM，`input.value` 为空 |
+| 分页条数 | `.pro-pagination .jx-select__placeholder` 的文本（`500条/页`）；`.jx-select__input` 是 `<input readonly>`，`innerText` 恒空、`input.value` 也为空 | 真实页面打印 DOM |
 | 引用模板下拉 | 需 `mouseenter` + `mouseover`（click 无效）；菜单是 `.jx-dropdown-menu`，**左侧导航有同名项，必须限定作用域** | 真实页面逐个派发事件比对；误点导航会导致路由跳走 |
 | 批量编辑 | **两级交互**：hover 按钮 → 字段浮层 `.jx-popper.is-light.jx-tooltip.jx-popover` → 点叶子 `SPAN` → 才开弹窗 | 真实页面 hover 后打印浮层结构 |
 | 弹窗识别 | 除颜色图外都含「批量编辑方式」；**颜色图没有**，须用 `.sku-image-batch-editor` 判断 | 逐个打开各字段面板读 `innerText` |
@@ -294,7 +300,9 @@ git -c http.proxy=http://127.0.0.1:7897 push  origin main
 ### 入库范围
 
 **入库**：`妙手采集箱助手.user.js`（交付物）、`AGENTS.md`、`步骤.md`、`最终审查报告.md`、
-`.playwright-mcp/` 下 **5 个脚本**（3 个 `test-*.mjs` + 2 个 `make-inject*.mjs`）。
+`.playwright-mcp/` 下 **8 个脚本**（5 个 `test-*.mjs` + `mutate-coverage.mjs` + 2 个 `make-inject*.mjs`，共约 47 KB）。
+这 8 个脚本是唯一能验证「前置条件崩了会不会静默成功」的手段 —— 真网页跑不出这些分支（未发布只有个位数条、
+`goPage` 不会按需失败、变异测试要改源码），只有真网页能验选择器与渲染时序。**两者互补，不可替代**。
 
 **不入库**（`.gitignore` 已挡）：`inject-body.js` / `inject-test.js` 等注入体产物（可重建）、
 `.playwright-mcp/_*/` 临时目录、日志、截图、`Thumbs.db`。
@@ -326,6 +334,9 @@ Select-String -Path "妙手采集箱助手.user.js" -Pattern "发布"  # 红线�
 node .playwright-mcp/test-judgesaved.mjs      # 19 例：6 该通过 + 13 该失败
 node .playwright-mcp/test-attachverify.mjs    # 8 例：失败优先 / 不可用 / 通过 / null / 截断 / noAssertion
 node .playwright-mcp/test-settings.mjs        # 7 例：knownTemplates 只迁移一次、不写回/回灌
+node .playwright-mcp/test-title-coverage.mjs  # 7 例 + 1 KNOWN：虚拟滚动覆盖/收敛（不需真实弹窗）
+node .playwright-mcp/test-color-coverage.mjs  # 3 例 + 2 KNOWN：颜色图分页遍历/翻页失败
+node .playwright-mcp/mutate-coverage.mjs      # 7 变异：证明上面两个不是恒真
 node .playwright-mcp/make-inject.mjs          # 改了脚本就重跑，重建 inject-body.js
 ```
 

@@ -11,6 +11,8 @@
 .playwright-mcp/*.log
 .playwright-mcp/*.png
 .playwright-mcp/*.har
+.playwright-mcp/*.yml
+.playwright-mcp/_mutant.user.js
 
 # ---- 操作系统 ----
 Thumbs.db
