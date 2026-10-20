@@ -1,0 +1,23 @@
+# ---- 注入体产物（由 make-inject*.mjs 从 `.user.js` 生成，可随时重建）----
+# 不入库理由：它们是交付物的派生物，且曾因「同版本号的旧快照」导致过注入不生效。
+# 重建：node .playwright-mcp/make-inject.mjs
+.playwright-mcp/inject-body.js
+.playwright-mcp/inject-test.js
+.playwright-mcp/inject-body-*.js
+.playwright-mcp/inject-test-*.js
+
+# ---- 临时/调试产物 ----
+.playwright-mcp/_*/
+.playwright-mcp/*.log
+.playwright-mcp/*.png
+.playwright-mcp/*.har
+
+# ---- 操作系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
