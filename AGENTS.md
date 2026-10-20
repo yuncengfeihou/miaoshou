@@ -43,7 +43,7 @@
 |---|---|
 | `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.0，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
-| `图片1/2/3.png` | 颜色图原始图（本地备份）。脚本实际用网络直链，不读本地文件 |
+| `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
 | `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；4 个脚本请保留**：两个 `test-*.mjs`（断言回归）+ 两个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
 
 ---
@@ -253,7 +253,57 @@ timer             startTimer / stopTimer（只改 .main-btn-time，不触发整�
    需要写入才能验证的，先报方案、拿同意，或标注「未验证」。
 5. **实测发现的新坑回写 `步骤.md`**（按主题归类，不要再按版本号堆）。
 6. **不要擅自清理业务数据**（如重复颜色图），先征得同意。
-7. **临时产物放 `.playwright-mcp/`**。
+7. **临时产物放 `.playwright-mcp/`**（注入体产物已在 `.gitignore`，见 §7.1）。
+
+---
+
+## 7.1 Git 与仓库（2026-10-20 起）
+
+**远端**：<https://github.com/yuncengfeihou/miaoshou>（分支 `main`）
+
+| 项 | 值 |
+|---|---|
+| 工作区 | 项目根目录即仓库根（`妙手采集箱助手.user.js` 与 `.git/` 同级） |
+| 用户 | `yuncengfeihou` / `117951839+yuncengfeihou@users.noreply.github.com`（全局配置） |
+| 换行 | `core.autocrlf=false`、`core.safecrlf=false` —— **仓库与工作区都用 LF**，避免 CRLF 噪声 |
+| 中文路径 | `core.quotepath=false`，`git status` 正常显示中文文件名 |
+| 代理 | **Git 未配置全局代理**，直连会 `Recv failure: Connection was reset`。本机系统代理为 `127.0.0.1:7897`，需**显式指定**（见下） |
+
+### 拉取 / 推送
+
+```powershell
+# 首次或换机：Git 无全局代理，必须显式带上（否则 connection reset）
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+git -c http.proxy=http://127.0.0.1:7897 pull  --rebase origin main
+git -c http.proxy=http://127.0.0.1:7897 push  origin main
+
+# 本机已配置过凭据（Git Credential Manager，system 级 credential.helper=manager），无需重复登录
+```
+
+> 若代理端口变了：`Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Select ProxyServer`
+
+### 入库范围
+
+**入库**：`妙手采集箱助手.user.js`（交付物）、`AGENTS.md`、`步骤.md`、`最终审查报告.md`、
+`.playwright-mcp/` 下 **4 个脚本**（2 个 `test-*.mjs` + 2 个 `make-inject*.mjs`）。
+
+**不入库**（`.gitignore` 已挡）：`inject-body.js` / `inject-test.js` 等注入体产物（可重建）、
+`.playwright-mcp/_*/` 临时目录、日志、截图、`Thumbs.db`。
+
+> 为什么注入体不入库：它们是 `.user.js` 的派生物，重建只需 `node .playwright-mcp/make-inject.mjs`；
+> 而历史上曾因一份**同版本号（1.15.0）的旧快照** `inject-body-1150.js` 导致注入后新代码不生效
+> （`boot()` 见版本号相同就沿用旧 DOM），该文件已于 2026-10-20 删除。**别把注入体提交回来。**
+
+### 提交前自检
+
+```powershell
+git status --short                    # 确认没有意外新增的注入体/临时文件
+node --check "妙手采集箱助手.user.js"
+git diff --cached --stat
+```
+
+**改了 `妙手采集箱助手.user.js` 必须同步提交**——远端只有这一份可安装的交付物，
+留一个未提交的本地改动，等于 GreasyFork 版本检测（§3）与实际代码对不上。
 
 ---
 
