@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.16.0
-// @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词条**只在点「立即更新」时**才整体替换。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
+// @version      1.17.0
+// @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT/CSV/JSON、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
 // @match        https://erp.91miaoshou.com/*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.16.0';
+  const SCRIPT_VERSION = '1.17.0';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -95,7 +95,8 @@
    * （面板被页面冲掉时会重建，但重建不丢模块级状态，真正会丢的是刷新。）
    */
   const settings = {
-    // 过滤词词库：面板里只读展示，「立即更新」按中英文逗号解析后整体替换
+    // 过滤词词库（**执行时唯一的来源**）：改它只有一条路 —— commitWords()
+    // （弹窗里「保存为新版本」/ 恢复历史）；历史版本另存在 localStorage['msxb-words-v1']
     deleteWords: [...CFG.deleteWords],
     // 三类模板的目标值＝面板下拉里选中的模板名；空串＝跟随页面下拉的第一个选项。
     // v1.8.0 起没有「模板预设」开关：设置里是什么就用什么（选中即保存，无防抖）
@@ -1845,7 +1846,9 @@
 
     await clickPreview(dlg);
 
-    // 词表来自面板设置（可手动增删），为空时只加前缀不删词
+    // 词表来自设置（弹窗里可增删）。先对账一次：确保「最新版词库」就是这里要用的词表
+    // （方向只有 settings → 版本库；历史绝不覆盖实际值，见「词库版本库」铁律②）
+    syncActiveWordVersion('自动对齐');
     const words = [...settings.deleteWords].filter(Boolean).sort((a, b) => b.length - a.length);
     if (!words.length) warn('删除词表为空，本步只加前缀，不删任何词');
 
@@ -2982,7 +2985,8 @@
       --t-fast: 0.16s;
       --t-base: 0.22s;
     }
-    .panel, .panel *, .menu-layer, .menu-layer * {
+    .panel, .panel *, .menu-layer, .menu-layer *,
+    .wbackdrop, .wbackdrop * {
       box-sizing: border-box;
       /* 中文环境优先：拉丁走 Segoe UI Variable / Segoe UI，中文回落 鸿蒙 / MiSans / 苹方 / 雅黑 UI */
       font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
@@ -3617,15 +3621,10 @@
       font-size: 10px; line-height: 1.5;
       color: var(--ink-3);
     }
-    /* 词库展开区（默认收起）：标签区 / 输入框 / 立即更新 —— 三块各自独立成盒 */
-    .set-words-body { margin-top: 5px; }
-    .set-words-body.is-hidden { display: none; }
-    /* 标签框与输入框之间留出明显间隔（原来只有 0 间距、两块白盒直接贴在一起，
-       看起来像一个被切成两半的盒子）。8px 足够把那两个"盒子"分开。 */
-    .set-import-ta { height: 64px; margin-top: 8px; margin-bottom: 6px; }
-    /* 词库两个按钮都占满整行、文字居中（和「读取模板列表」一致） */
-    .set-words-toggle { width: 100%; margin-bottom: 7px; text-align: center; }
-    .set-apply-words { width: 100%; margin-bottom: 3px; text-align: center; }
+    /* 词库入口按钮：占满整行、文字居中（和「读取模板列表」一致）。
+       v1.17.0 起由**居中弹窗**接管编辑 / 对比 / 导出，面板里只剩这一个按钮 ——
+       原来的内联展开区（.set-words-body / .set-import-ta / .set-apply-words）已删除。 */
+    .set-words-toggle { width: 100%; margin-bottom: 3px; text-align: center; }
 
     /* 打开设置时隐藏步骤列表与主按钮 */
     .list.is-hidden, .foot.is-hidden { display: none; }
@@ -3638,7 +3637,9 @@
       position: fixed;
       top: 16px; left: 50%;
       transform: translateX(-50%);
-      z-index: 2147483001;
+      /* 阶梯：面板 3000 < 遮罩/弹窗 3001 < 下拉浮层 3002 < toast 3003
+         —— toast 必须在遮罩之上，否则弹窗开着时看不到「落库复核未通过」 */
+      z-index: 2147483003;
       display: flex; flex-direction: column; gap: 6px;
       align-items: center;
       pointer-events: none;
@@ -3695,17 +3696,343 @@
        写法是 transition-duration 压到 0.01ms；绝不能用 transition: none —— 那会把颜色过渡一起干掉。
        入场/弹出动画关掉后，面板与下拉必须显式停在「已就位」状态，否则会卡在动画首帧。 */
     @media (prefers-reduced-motion: reduce) {
-      .panel, .asel-menu, .asel-chevron, .bar-fill, .toast, .upd,
-      .gear, .fold, .row, .main-btn, .set-btn, .asel-trigger, .asel-item, .word-chip {
+      .panel, .asel-menu, .asel-chevron, .bar-fill, .toast, .upd, .wbackdrop, .wmodal,
+      .gear, .fold, .row, .main-btn, .set-btn, .asel-trigger, .asel-item, .word-chip,
+      .wm-item, .wm-tab, .wm-mini, .wm-btn, .wm-check, .wm-x {
         animation: none !important;
         transition-duration: 0.01ms !important;
       }
-      .panel, .asel-menu { opacity: 1 !important; }
+      .panel, .asel-menu, .wbackdrop, .wmodal { opacity: 1 !important; }
       .gear:hover, .gear:active, .fold:hover, .fold:active, .row:hover, .row:active,
       .main-btn:hover, .main-btn:active, .set-btn:hover, .set-btn:active, .upd:hover, .upd:active,
-      .asel-trigger:hover, .asel-trigger:active, .asel-item:hover, .word-chip:hover {
+      .asel-trigger:hover, .asel-trigger:active, .asel-item:hover, .word-chip:hover,
+      .wm-btn:hover, .wm-btn:active, .wm-x:active {
         transform: none !important;
       }
+    }
+
+    /* ============================================================================
+       词库管理弹窗（v1.17.0）：遮罩 + 居中子弹窗
+       · 挂在 shadow 里、作为 .panel 的**兄弟节点** —— 塞进 .panel 会被 overflow:hidden
+         裁掉，还会跟着面板拖动一起跑
+       · 层级阶梯：面板 3000 < 遮罩/弹窗 3001 < 下拉浮层 3002 < toast 3003
+         （toast 必须在遮罩之上，否则弹窗开着看不到「落库复核未通过」的提示）
+       ============================================================================ */
+    .wbackdrop {
+      position: fixed; inset: 0;
+      z-index: 2147483001;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+      background: rgba(20, 20, 22, 0.24);
+      -webkit-backdrop-filter: blur(2px);
+      backdrop-filter: blur(2px);
+      animation: wm-fade 0.16s var(--ease);
+      user-select: none;
+    }
+    @keyframes wm-fade { from { opacity: 0; } to { opacity: 1; } }
+    .wmodal {
+      display: flex; flex-direction: column;
+      width: min(760px, calc(100vw - 40px));
+      height: min(560px, calc(100vh - 56px));
+      border-radius: var(--r-lg);
+      background: rgba(255, 255, 255, 0.96);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      backdrop-filter: blur(24px) saturate(180%);
+      box-shadow: var(--sh-3);
+      color: var(--ink);
+      overflow: hidden;
+      animation: wm-in 0.24s var(--ease);
+    }
+    @keyframes wm-in {
+      from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* 头 */
+    .wm-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 12px 10px 16px; }
+    .wm-titles { flex: 1; min-width: 0; }
+    .wm-title { font-size: 13px; font-weight: 680; letter-spacing: -0.2px; }
+    .wm-meta {
+      margin-top: 2px;
+      font-size: 10px; font-weight: 500; color: var(--ink-2);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .wm-x {
+      flex: none;
+      width: 22px; height: 22px; margin-top: -1px;
+      border: none; border-radius: 50%;
+      background: var(--fill-2);
+      color: var(--ink-2);
+      font-family: inherit; font-size: 14px; line-height: 1;
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
+        transform var(--t-fast) var(--ease);
+    }
+    .wm-x:hover { background: var(--fill-3); color: var(--ink); }
+    .wm-x:active { transform: scale(0.94); }
+
+    /* 主体：左时间线 + 右内容 */
+    .wm-body { flex: 1; min-height: 0; display: flex; padding: 0 12px; }
+    .wm-side {
+      flex: none; width: 236px;
+      overflow-y: auto; overscroll-behavior: contain;
+      padding: 0 2px 8px 0;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .wm-side:hover { scrollbar-color: rgba(60, 60, 67, 0.30) transparent; }
+    .wm-main {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+      padding: 0 0 4px 10px;
+      border-left: 0.5px solid var(--line-soft);
+    }
+    .wm-side::-webkit-scrollbar { width: 8px; }
+    .wm-side::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+    .wm-side::-webkit-scrollbar-track { background: transparent; }
+    .wm-side::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border: 2px solid transparent;
+      border-radius: 5px;
+      background-clip: content-box;
+      transition: background-color 0.18s ease;
+    }
+    .wm-side:hover::-webkit-scrollbar-thumb { background-color: rgba(60, 60, 67, 0.28); }
+
+    /* 版本行 */
+    .wm-item {
+      position: relative;
+      margin-bottom: 3px;
+      padding: 6px 8px;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease);
+    }
+    .wm-item:hover { background: var(--fill-1); }
+    .wm-item.is-sel { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
+    .wm-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-line); }
+    .wm-item-top { display: flex; align-items: center; gap: 5px; }
+    .wm-id { font-size: 11px; font-weight: 650; color: var(--ink); }
+    .wm-cur {
+      font-size: 9px; font-weight: 650;
+      color: var(--accent-deep);
+      background: var(--accent-tint);
+      border-radius: var(--r-2xs);
+      padding: 0 4px;
+    }
+    .wm-time { margin-left: auto; font-size: 9.5px; font-weight: 500; color: var(--ink-3); }
+    .wm-item-bot { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+    .wm-count { font-size: 10px; font-weight: 500; color: var(--ink-2); }
+    .wm-delta { display: flex; gap: 4px; margin-left: auto; font-size: 9.5px; font-weight: 650; }
+    .wm-delta .is-add { color: #1E8E3E; }
+    .wm-delta .is-del { color: #D70015; }
+    .wm-delta .is-order { color: var(--ink-3); }
+    /* 操作行**始终占位**（min-height），只在悬停/选中/聚焦时显形 —— 不然鼠标划过整列会上下跳 */
+    .wm-item-acts { display: flex; align-items: center; gap: 4px; min-height: 17px; margin-top: 3px; visibility: hidden; }
+    .wm-item:hover .wm-item-acts,
+    .wm-item:focus-within .wm-item-acts,
+    .wm-item.is-sel .wm-item-acts { visibility: visible; }
+    .wm-mini {
+      border: none;
+      padding: 2px 6px;
+      border-radius: var(--r-2xs);
+      background: rgba(120, 120, 128, 0.10);
+      color: var(--ink-2);
+      font-family: inherit; font-size: 9.5px; font-weight: 600;
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+    }
+    .wm-mini:hover { background: rgba(120, 120, 128, 0.18); color: var(--ink); }
+    .wm-mini.is-danger { background: rgba(255, 59, 48, 0.14); color: #D70015; }
+    .wm-mini.is-danger:hover { background: rgba(255, 59, 48, 0.24); }
+
+    /* 顶部：分段控件 + 搜索 */
+    .wm-top { display: flex; align-items: center; gap: 8px; padding: 2px 0 8px; }
+    .wm-tabs { display: flex; gap: 2px; flex: none; padding: 2px; border-radius: var(--r-sm); background: var(--fill-1); }
+    .wm-tab {
+      border: none; background: transparent;
+      padding: 3px 10px;
+      border-radius: var(--r-xs);
+      color: var(--ink-2);
+      font-family: inherit; font-size: 10.5px; font-weight: 600;
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+    }
+    .wm-tab:hover { color: var(--ink); }
+    .wm-tab.is-on {
+      background: #FFFFFF;
+      color: var(--ink);
+      box-shadow: var(--sh-1), inset 0 0 0 0.5px var(--line-soft);
+    }
+    .wm-search {
+      display: flex; align-items: center; gap: 5px;
+      flex: 1; min-width: 0; max-width: 250px;
+      margin-left: auto;
+      padding: 3px 8px;
+      border-radius: var(--r-sm);
+      background: #FFFFFF;
+      box-shadow: inset 0 0 0 0.5px var(--line);
+      transition: box-shadow var(--t-fast) var(--ease);
+    }
+    .wm-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent-line), 0 0 0 3px var(--accent-tint); }
+    .wm-search.is-hidden { display: none; }
+    .wm-search-ico { flex: none; display: flex; width: 11px; height: 11px; color: var(--ink-3); }
+    .wm-search-ico svg { display: block; width: 11px; height: 11px; }
+    .wm-search-input {
+      flex: 1; min-width: 0;
+      border: none; outline: none; background: transparent;
+      padding: 0;
+      font-family: inherit; font-size: 10.5px; color: var(--ink);
+      user-select: text;
+    }
+    .wm-search-input::placeholder { color: var(--ink-3); }
+
+    /* 三块画布 */
+    .wm-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .wm-pane.is-hidden { display: none; }
+    .wm-bar { display: flex; align-items: center; gap: 6px; padding-bottom: 7px; }
+    .wm-sel { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+    .wm-sel-label { flex: none; font-size: 9.5px; font-weight: 600; color: var(--ink-3); }
+    .wm-sel .asel { flex: 1; min-width: 0; }
+    .wm-sel .asel-trigger { padding: 3px 7px; font-size: 10px; }
+    .wm-arrow { flex: none; font-size: 10px; color: var(--ink-3); }
+    .wm-check {
+      flex: none;
+      border: none;
+      padding: 3px 8px;
+      border-radius: var(--r-xs);
+      background: var(--fill-1);
+      color: var(--ink-2);
+      font-family: inherit; font-size: 10px; font-weight: 600;
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+    }
+    .wm-check:hover { background: var(--fill-2); color: var(--ink); }
+    .wm-check.is-on { background: var(--accent-tint); color: var(--accent-deep); box-shadow: inset 0 0 0 0.5px var(--accent-line); }
+    .wm-pane-body {
+      flex: 1; min-height: 0;
+      overflow-y: auto; overscroll-behavior: contain;
+      padding: 2px 4px 2px 0;
+      user-select: text;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .wm-pane-body::-webkit-scrollbar { width: 8px; }
+    .wm-pane-body::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+    .wm-pane-body::-webkit-scrollbar-track { background: transparent; }
+    .wm-pane-body::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border: 2px solid transparent;
+      border-radius: 5px;
+      background-clip: content-box;
+    }
+    .wm-pane-body:hover::-webkit-scrollbar-thumb { background-color: rgba(60, 60, 67, 0.28); }
+    .wm-pane-body:hover { scrollbar-color: rgba(60, 60, 67, 0.30) transparent; }
+
+    /* 差异摘要与行 */
+    .wm-sum { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; padding: 0 0 8px; font-size: 10px; color: var(--ink-2); }
+    .wm-sum-item { display: inline-flex; align-items: baseline; gap: 3px; }
+    .wm-sum-item b { font-size: 11px; font-weight: 700; }
+    .wm-sum-item b.is-add { color: #1E8E3E; }
+    .wm-sum-item b.is-del { color: #D70015; }
+    .wm-sum-who { margin-left: auto; font-size: 9.5px; color: var(--ink-3); }
+    .wm-sect { margin: 6px 0 2px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px; color: var(--ink-3); }
+    .wm-sect.is-del { color: #C0261B; }
+    .wm-sect.is-add { color: #1E7A38; }
+    .wm-diff { display: flex; flex-direction: column; gap: 1px; }
+    .wm-diff-row {
+      display: flex; gap: 5px;
+      padding: 1px 6px;
+      border-radius: 5px;
+      font-size: 11.5px; line-height: 1.6;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .wm-diff-row.is-del { background: rgba(255, 59, 48, 0.08); color: #A5120B; }
+    .wm-diff-row.is-add { background: rgba(47, 196, 110, 0.12); color: #12633A; }
+    .wm-diff-row.is-keep { color: var(--ink-2); }
+    .wm-sign { flex: none; width: 8px; font-weight: 700; text-align: center; }
+    .wm-diff-text { min-width: 0; }
+    .wm-hit { background: rgba(255, 204, 0, 0.38); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+    /* 词条页 */
+    .wm-chips { flex: 1; min-height: 0; max-height: none; }
+    .wm-info { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; font-size: 10px; font-weight: 500; color: var(--ink-2); min-height: 16px; }
+    .wm-acts { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
+
+    /* 编辑页 */
+    .wm-ta {
+      flex: none;
+      width: 100%; height: 132px;
+      resize: none;
+      padding: 8px 9px;
+      border: none; outline: none;
+      border-radius: var(--r-sm);
+      background: #FFFFFF;
+      box-shadow: inset 0 0 0 0.5px var(--line);
+      color: var(--ink);
+      font-family: inherit; font-size: 11px; line-height: 1.55;
+      user-select: text;
+      scrollbar-width: thin;
+      transition: box-shadow var(--t-fast) var(--ease);
+    }
+    .wm-ta:focus { box-shadow: inset 0 0 0 1px var(--accent-line), 0 0 0 3px var(--accent-tint); }
+    .wm-ta::placeholder { color: var(--ink-3); }
+    .wm-edit-bar { padding-top: 7px; }
+
+    /* 按钮 */
+    .wm-btn {
+      border: none;
+      padding: 5px 11px;
+      border-radius: var(--r-xs);
+      background: var(--fill-2);
+      color: var(--ink);
+      font-family: inherit; font-size: 10.5px; font-weight: 600;
+      cursor: pointer;
+      transition: background-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+    }
+    .wm-btn:hover { background: var(--fill-3); }
+    .wm-btn:active { transform: scale(0.97); }
+    .wm-btn.is-plain { background: var(--fill-1); color: var(--ink-2); }
+    .wm-btn.is-plain:hover { background: var(--fill-2); color: var(--ink); }
+    .wm-btn.is-primary { background: var(--accent); color: #fff; margin-left: auto; }
+    .wm-btn.is-primary:hover { background: var(--accent-deep); }
+    .wm-btn:disabled, .wm-btn:disabled:hover {
+      background: var(--fill-1);
+      color: var(--ink-3);
+      cursor: default;
+      transform: none;
+    }
+
+    /* 底 */
+    .wm-foot {
+      display: flex; align-items: center; gap: 6px;
+      padding: 9px 12px 11px 16px;
+      border-top: 0.5px solid var(--line-soft);
+    }
+    .wm-foot-hint {
+      flex: 1; min-width: 0;
+      font-size: 9.5px; color: var(--ink-3);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .wm-foot-gap { flex: none; width: 2px; }
+
+    /* 空态 / 提示 */
+    .wm-empty { padding: 10px 6px; font-size: 10.5px; line-height: 1.65; color: var(--ink-3); }
+    .wm-note {
+      margin: 2px 0 6px;
+      padding: 5px 8px;
+      border-radius: var(--r-xs);
+      background: rgba(255, 149, 0, 0.10);
+      color: #8A4B00;
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    /* 键盘聚焦：新控件沿用系统蓝描边 */
+    .wm-x:focus-visible, .wm-tab:focus-visible, .wm-mini:focus-visible, .wm-btn:focus-visible,
+    .wm-check:focus-visible, .wm-search-input:focus-visible, .wm-ta:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--accent-line), 0 2px 6px rgba(10, 132, 255, 0.18);
     }
   `;
 
@@ -3867,6 +4194,9 @@
   async function runSequence(steps) {
     if (uiState.running) return;
     closeSelectMenu();        // 开跑前收起可能展开的下拉浮层
+    // 铁律②：开跑前把「最新版词库」对齐到实际生效词库（方向只有 settings → 版本库）。
+    // 这样「执行时用的词库」＝「你看到的最后一版」，不会出现"面板显示的是 A、跑的是 B"。
+    syncActiveWordVersion('自动对齐');
     uiState.running = true;
     uiState.startedAt = Date.now();   // 「刚开跑就别停」的保护窗口用；同时也计时起点
     stopRequested = false;
@@ -4272,69 +4602,1044 @@
     }
   }
 
-  /** 词库展示：只读标签，每词一个浅蓝底色 */
-  function renderWordsChips() {
-    const box = refs.setWordsChips;
-    if (!box) return;
-    box.textContent = '';
-    const words = settings.deleteWords;
-    if (!words.length) {
-      box.appendChild(el('div', 'word-empty', '词库为空：第 6 步只加前缀，不删任何词'));
-    } else {
-      words.forEach((w) => {
-        const c = el('span', 'word-chip', w);
-        c.title = w;
-        box.appendChild(c);
-      });
+  /* ======================= 词库版本库（v1.17.0） =======================
+   *
+   * 能力：多版本留档 + 任意两版差异（代码 diff 风格）+ 按版本导出 + 版本内搜索 +
+   *       只保留最近 10 次（带时间戳）+ 居中弹窗管理。
+   *
+   * 两条铁律（改这里之前先读）：
+   *   ① `settings.deleteWords` 是**唯一权威**的生效词库 —— 第 6 步与落库复核只读它。
+   *      版本库不参与执行：历史坏了、丢了，业务一步都不受影响。
+   *   ② **不变量：wordsStore.list[0].words === settings.deleteWords**（最新版＝正在用的版本）。
+   *      能打破它的路径很多（DevTools 手改、旧版脚本写入、配额丢历史、改完没刷新就换脚本），
+   *      所以「加载后」与「每次开跑前」都调 syncActiveWordVersion() 把实际值补记成一条新版本。
+   *      方向**只有一个**：settings → 版本库；历史绝不反过来覆盖实际值。
+   *
+   * 存储选型：localStorage（不是 IndexedDB）。10 版 × 约 0.5 KB ≈ 5 KB，配额（约 5 MB）无所谓；
+   * 真正的约束是**同步可读** —— loadSettings() 在 boot() 之前同步跑，换 IDB 得把整条启动链路
+   * 改成异步（首帧空面板 + 与看护循环重建的竞态）。要做「每次跑全链自动快照 / 200+ 版 /
+   * 版本内全文检索」时再换，换的时候只需动这一层。
+   */
+  const WORDS_STORE_KEY = 'msxb-words-v1';
+  const WORDS_MAX_VERSIONS = 10;
+
+  /** 版本库内存副本（新 → 旧）。list[0] 恒等于 settings.deleteWords（铁律②） */
+  const wordsStore = { seq: 0, list: [] };
+
+  /** 两位补零。不用 toLocaleString：各浏览器/语言的输出格式不一致，这里要稳定短格式 */
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  /**
+   * 时间戳格式（本地时区）
+   *   'short' = 12-25 14:03 ｜ 'full' = 2026-12-25 14:03:07 ｜ 'rel' = 刚刚 / 12 分钟前 / 昨天 14:03
+   */
+  function fmtVersionTime(ms, style) {
+    const t = Number(ms);
+    if (!Number.isFinite(t) || t <= 0) return '未知时间';
+    const d = new Date(t);
+    const md = pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    if (style === 'full') return d.getFullYear() + '-' + md + ' ' + hm + ':' + pad2(d.getSeconds());
+    if (style === 'rel') {
+      const diff = Date.now() - t;
+      if (diff < 60e3) return '刚刚';
+      if (diff < 3600e3) return Math.floor(diff / 60e3) + ' 分钟前';
+      if (diff < 86400e3) return Math.floor(diff / 3600e3) + ' 小时前';
+      if (diff < 172800e3) return '昨天 ' + hm;
+      if (diff < 604800e3) return Math.floor(diff / 86400e3) + ' 天前';
     }
-    if (refs.setWordsBtn) {
-      const open = !!refs.setWordsBody && !refs.setWordsBody.classList.contains('is-hidden');
-      refs.setWordsBtn.textContent = wordsBtnText(open);
-    }
+    return md + ' ' + hm;
   }
 
-  /** 词库按钮文案：「管理词库（N）」↔「收起词库（N）」，N 就是当前词条数 */
-  function wordsBtnText(open) {
-    return (open ? '收起词库' : '管理词库') + '（' + settings.deleteWords.length + '）';
+  /** 两个词条数组是否完全一致（含顺序） */
+  function sameWords(a, b) {
+    const x = Array.isArray(a) ? a : [];
+    const y = Array.isArray(b) ? b : [];
+    return x.length === y.length && x.every((w, i) => w === y[i]);
+  }
+
+  function findWordVersion(id) {
+    return wordsStore.list.find((v) => v.id === id) || null;
+  }
+
+  /** 当前生效的版本（＝最新版；由不变量保证它就是 settings.deleteWords 那一份） */
+  function activeWordVersion() { return wordsStore.list[0] || null; }
+
+  /** 读版本库 → 校验 → 裁剪 → 立刻对账。坏数据只丢那一条，绝不让它传染执行侧。 */
+  function loadWordStore() {
+    let broken = false;
+    try {
+      const raw = localStorage.getItem(WORDS_STORE_KEY);
+      if (raw) {
+        const o = JSON.parse(raw) || {};
+        const arr = Array.isArray(o.list) ? o.list : [];
+        wordsStore.list = arr.map((v) => ({
+          id: Math.max(0, Math.floor(Number(v && v.id) || 0)),
+          at: Math.max(0, Math.floor(Number(v && v.at) || 0)),
+          words: parseWords(Array.isArray(v && v.words)
+            ? v.words.filter((w) => typeof w === 'string').join(',')
+            : ''),
+          reason: typeof (v && v.reason) === 'string' ? v.reason : 'manual',
+          note: typeof (v && v.note) === 'string' ? v.note : ''
+        })).filter((v) => v.id > 0 && v.at > 0 && v.words.length);
+        wordsStore.seq = Math.max(Number(o.seq) || 0, ...wordsStore.list.map((v) => v.id), 0);
+        pruneWordVersions();
+      }
+    } catch (e) {
+      broken = true;
+      warn('读取词库版本库失败，按当前词库重建:', e.message || e);
+      wordsStore.list = [];
+    }
+    // 空库（首次升级 / 上一步读坏了）→ 把当前生效词库记成基线；与当前不一致 → 补记一条
+    syncActiveWordVersion(broken ? 'reconciled' : 'seed');
   }
 
   /**
-   * 词库展开区开/关：按钮文案在「管理词库（N） / 收起词库（N）」之间切换。
-   * 展开时**不自动聚焦输入框**（避免抢走页面焦点、也别清空用户已输入的内容）。
+   * 写版本库。配额不够时**丢最旧一版**再试（历史可有可无，当前词库不能丢），
+   * 仍失败只 warn —— 绝不把异常抛进业务流程。
    */
-  function setWordsOpen(open) {
-    if (!refs.setWordsBody) return;
-    refs.setWordsBody.classList.toggle('is-hidden', !open);
-    if (refs.setWordsBtn) {
-      refs.setWordsBtn.textContent = wordsBtnText(open);
-      refs.setWordsBtn.classList.toggle('is-on', !!open);
+  function saveWordStore() {
+    const write = () => localStorage.setItem(WORDS_STORE_KEY, JSON.stringify({
+      v: 1,
+      seq: wordsStore.seq,
+      list: wordsStore.list.map((x) => ({
+        id: x.id, at: x.at, words: x.words, reason: x.reason, note: x.note
+      }))
+    }));
+    try {
+      write();
+      return true;
+    } catch (e) {
+      for (let i = 0; i < 3 && wordsStore.list.length > 1; i++) {
+        const dropped = wordsStore.list.pop();
+        try {
+          write();
+          warn('词库版本库写入失败，丢弃最旧版本 #' + dropped.id + ' 后已写入');
+          return true;
+        } catch (_) { /* 继续丢下一版 */ }
+      }
+      warn('保存词库版本库失败（历史未记录，当前词库不受影响）:', e.message || e);
+      return false;
     }
   }
 
+  /** 裁剪到最近 WORDS_MAX_VERSIONS 版；**永不丢 list[0]**（那是正在用的版本） */
+  function pruneWordVersions() {
+    let dropped = 0;
+    while (wordsStore.list.length > WORDS_MAX_VERSIONS) {
+      wordsStore.list.pop();
+      dropped += 1;
+    }
+    return dropped;
+  }
+
   /**
-   * 更新词库：按中英文逗号解析 → 整体替换（词库本身不可直接编辑）。
-   * v1.13.0 起**只在点「立即更新」时**才写词库 —— 输入框里打什么都不会自动落盘，
-   * 想生效必须显式点按钮（避免边打字边被清词、也避免误触即改）。
-   * 返回是否已生效。
+   * 追加一版（前插）。id 用单调递增的 seq，**裁剪后不回收** —— 这样「恢复自 #8」永远指得准。
+   * 空词库绝不入历史（防止把"清空词库"伪装成一版）。
    */
-  function applyWordImport(text) {
-    const words = parseWords(text);
-    if (!words.length) {
-      // 清空输入框 ≠ 清空词库：防止手滑把词库清空
+  function pushWordVersion(words, reason, note) {
+    const list = parseWords((Array.isArray(words) ? words : []).join(','));
+    if (!list.length) return null;
+    wordsStore.seq += 1;
+    const ver = {
+      id: wordsStore.seq,
+      at: Date.now(),
+      words: list,
+      reason: reason || 'manual',
+      note: note || ''
+    };
+    wordsStore.list.unshift(ver);
+    pruneWordVersions();
+    saveWordStore();
+    return ver;
+  }
+
+  /**
+   * 对账（铁律②）：让「最新版」永远等于「正在用的词库」。
+   * 不一致就把实际值补记成一条新版本，绝不反过来用历史覆盖实际值 ——
+   * 否则会变成「我刚改的词库，一刷新 / 一跑就变回去」。
+   */
+  function syncActiveWordVersion(reason) {
+    const latest = activeWordVersion();
+    if (latest && sameWords(latest.words, settings.deleteWords)) return false;
+    pushWordVersion(
+      [...settings.deleteWords],
+      latest ? (reason || 'reconciled') : 'seed',
+      latest ? '与执行词库对齐' : '升级到 v1.17.0 时的现有词库'
+    );
+    return true;
+  }
+
+  /**
+   * 词库差异：**按「词集合」比较，不按顺序**。
+   * 依据：currentTitleBuilder() 本来就把词按长度降序排，顺序对删词结果没有任何影响；
+   * 按序列比会让「导出 → 再粘贴回来」显示满屏假变更。
+   *
+   * 大小写**敏感**：默认词库里 '3D' 与 '3d' 是两条独立词条，统一小写会把真差异吃掉。
+   *
+   * 方向：aWords = 基准（旧），bWords = 对比（新）。added / removed 各自保持原顺序。
+   * 返回 { added, removed, kept, orderOnly }。
+   */
+  function diffWords(aWords, bWords) {
+    const a = Array.isArray(aWords) ? aWords : [];
+    const b = Array.isArray(bWords) ? bWords : [];
+    const setA = new Set(a);
+    const setB = new Set(b);
+    const added = b.filter((w) => !setA.has(w));
+    const removed = a.filter((w) => !setB.has(w));
+    const kept = b.filter((w) => setA.has(w)).length;
+    // 集合相同、顺序不同：不能算"无差异"，要显式说清"只有顺序变了"，否则看着像坏了
+    const orderOnly = !added.length && !removed.length && !sameWords(a, b);
+    return { added, removed, kept, orderOnly };
+  }
+
+  /**
+   * 写入词库的**唯一入口**（弹窗编辑 / 恢复 / 导入都走这里）：
+   *   ① 解析 + 去重；② 空库拒绝（清空输入框 ≠ 清空词库）；③ 与现值相同不写（不产生空版本）；
+   *   ④ **先**落 settings（权威，执行时读它），**再**追加历史版本。
+   * 返回是否真的改变了生效词库。
+   */
+  function commitWords(words, reason, note) {
+    const list = parseWords((Array.isArray(words) ? words : []).join(','));
+    if (!list.length) {
       toast(false, '词库未更新', '没解析到词，请用中英文逗号分隔');
       return false;
     }
-    const same = words.length === settings.deleteWords.length &&
-      words.every((w, i) => w === settings.deleteWords[i]);
-    if (same) {
-      toast(true, '词库未变', words.length + ' 词 · 与当前词库一致');
-      return true;
+    if (sameWords(list, settings.deleteWords)) {
+      toast(true, '词库未变', list.length + ' 词 · 与当前词库一致');
+      return false;
     }
-    settings.deleteWords = words;
-    saveSettings();
-    renderWordsChips();
-    toast(true, '词库已更新', words.length + ' 词 · 已整体替换');
+    const prev = settings.deleteWords.slice();
+    settings.deleteWords = list;
+    const saved = saveSettings();          // 权威：第 6 步 / 落库复核读的就是它
+    const ver = pushWordVersion(list, reason || 'manual', note || '');
+    refreshWordsBtn();
+    renderWordsModal();
+    const d = diffWords(prev, list);
+    if (!saved) {
+      // 存储写失败：内存里已生效，但刷新会回到上一版 —— 必须说清楚，别让人以为落盘了
+      toast(false, '词库仅本次会话生效', '本地存储写入失败，刷新后会回到上一版');
+    } else {
+      toast(true, '词库已更新',
+        list.length + ' 词 · 新版本 #' + (ver ? ver.id : '-') + ' · +' + d.added.length + ' −' + d.removed.length);
+    }
     return true;
+  }
+
+  /* ---------- 词库管理弹窗：状态 ---------- */
+
+  /**
+   * 弹窗状态**必须跨面板重建保留**：看护循环一旦发现面板被页面冲掉就重建整块 shadow，
+   * 弹窗 DOM 会跟着消失 —— buildPanel() 末尾按这份状态原样再建一次。
+   */
+  const wordsModalState = {
+    open: false,
+    tab: 'diff',          // 'diff' 差异 ｜ 'words' 词条 ｜ 'edit' 编辑
+    selId: 0,             // 右栏正在看的版本（词条页 / 导出目标）
+    aId: 0,               // 差异页「基准 A」
+    bId: 0,               // 差异页「对比 B」
+    showKept: false,      // 差异页是否列出未变化的词
+    query: '',            // 搜索框（词条页与差异页共用）
+    draft: '',            // 编辑页草稿（关弹窗不丢，刷新才丢）
+    dirty: false,         // 草稿是否已被改过（切页/重开不清空，避免手滑丢工作）
+    confirmId: 0,         // 正在二次确认「恢复」的版本 id
+    confirmTimer: 0,
+    returnFocus: null     // 关闭后把焦点还给打开它的按钮
+  };
+
+  /** 面板上的入口按钮：文案与 tooltip 跟着词库走 */
+  function refreshWordsBtn() {
+    const btn = refs.setWordsBtn;
+    if (!btn) return;
+    const n = settings.deleteWords.length;
+    const cur = activeWordVersion();
+    btn.textContent = '管理词库（' + n + '）';
+    btn.title = '词库版本管理：' + n + ' 词 · ' + wordsStore.list.length + '/' + WORDS_MAX_VERSIONS + ' 版'
+      + (cur ? ' · 最新 ' + fmtVersionTime(cur.at, 'short') : '')
+      + '（版本对比 / 搜索 / 编辑 / 导出）';
+  }
+
+  /** 弹窗里的小节标题 */
+  function wmSection(text, tone) {
+    return el('div', 'wm-sect' + (tone ? ' is-' + tone : ''), text);
+  }
+
+  /** 把 text 里命中 query 的片段包成 <mark>（大小写不敏感，但**不改动词本身**） */
+  function fillHighlight(node, text, query) {
+    node.textContent = '';
+    const q = String(query || '');
+    const src = String(text == null ? '' : text);
+    if (!q) { node.textContent = src; return; }
+    const hay = src.toLowerCase();
+    const needle = q.toLowerCase();
+    let from = 0;
+    let hits = 0;
+    while (needle.length) {
+      const i = hay.indexOf(needle, from);
+      if (i < 0) break;
+      if (i > from) node.appendChild(document.createTextNode(src.slice(from, i)));
+      node.appendChild(el('mark', 'wm-hit', src.slice(i, i + needle.length)));
+      from = i + needle.length;
+      hits += 1;
+    }
+    if (!hits) { node.textContent = src; return; }
+    if (from < src.length) node.appendChild(document.createTextNode(src.slice(from)));
+  }
+
+  /** Tab 焦点循环（shadow DOM 里 document.activeElement 是 host，得问 shadowRoot） */
+  function trapTab(e, root) {
+    const all = [...root.querySelectorAll('button, input, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((node) => !node.disabled && node.offsetParent !== null);
+    if (!all.length) return;
+    const first = all[0];
+    const last = all[all.length - 1];
+    const focused = (shadow && shadow.activeElement) || document.activeElement;
+    if (e.shiftKey && focused === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && focused === last) { e.preventDefault(); first.focus(); }
+  }
+
+  /** 文件名里的时间戳：20261225_1403（不含 - : 空格，Windows 文件名安全） */
+  function stampForFile(ms) {
+    const d = new Date(Number(ms) || Date.now());
+    return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '_'
+      + pad2(d.getHours()) + pad2(d.getMinutes());
+  }
+
+  /* ---------- 词库管理弹窗：导出 / 复制 ---------- */
+
+  /**
+   * TXT **不带 BOM**：带 BOM 的文件再粘回编辑框会变成「\uFEFF短袖」，round-trip 就坏了。
+   * Excel 友好是另一回事 —— 那个用 CSV（带 BOM）。
+   */
+  function wordsTxt(words) { return (words || []).join(','); }
+
+  function wordsCsv(words) {
+    return '\uFEFF' + (words || [])
+      .map((w) => '"' + String(w).replace(/"/g, '""') + '"')
+      .join('\r\n') + '\r\n';
+  }
+
+  function versionJson(ver) {
+    return JSON.stringify({
+      id: ver.id,
+      at: ver.at,
+      time: fmtVersionTime(ver.at, 'full'),
+      count: ver.words.length,
+      reason: ver.reason,
+      note: ver.note,
+      words: ver.words
+    }, null, 2) + '\n';
+  }
+
+  function downloadText(name, text, mime) {
+    try {
+      const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.style.display = 'none';
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+      return true;
+    } catch (e) {
+      warn('导出文件失败:', e.message || e);
+      toast(false, '导出失败', (e && e.message) || String(e));
+      return false;
+    }
+  }
+
+  /** 导出一版：format = 'txt'（可原样粘回）｜'csv'（Excel）｜'json'（含元数据） */
+  function exportWordVersion(ver, format) {
+    if (!ver) { toast(false, '没有可导出的版本', '先在列表里选一版'); return false; }
+    const base = '词库_v' + ver.id + '_' + stampForFile(ver.at);
+    const fmt = format || 'txt';
+    if (fmt === 'csv') downloadText(base + '.csv', wordsCsv(ver.words), 'text/csv;charset=utf-8');
+    else if (fmt === 'json') downloadText(base + '.json', versionJson(ver), 'application/json');
+    else downloadText(base + '.txt', wordsTxt(ver.words), 'text/plain;charset=utf-8');
+    toast(true, '已导出 #' + ver.id, ver.words.length + ' 词 · ' + fmt.toUpperCase());
+    return true;
+  }
+
+  /** 全部版本一次性导出（备份 / 换机） */
+  function exportAllWordVersions() {
+    if (!wordsStore.list.length) { toast(false, '没有可导出的版本', '版本库为空'); return false; }
+    const payload = {
+      script: '妙手采集箱助手',
+      version: SCRIPT_VERSION,
+      exportedAt: fmtVersionTime(Date.now(), 'full'),
+      maxVersions: WORDS_MAX_VERSIONS,
+      active: settings.deleteWords,
+      versions: wordsStore.list.map((v) => ({
+        id: v.id,
+        at: v.at,
+        time: fmtVersionTime(v.at, 'full'),
+        count: v.words.length,
+        reason: v.reason,
+        note: v.note,
+        words: v.words
+      }))
+    };
+    downloadText('词库备份_' + stampForFile(Date.now()) + '.json',
+      JSON.stringify(payload, null, 2) + '\n', 'application/json');
+    toast(true, '已导出全部版本', wordsStore.list.length + ' 版 · JSON');
+    return true;
+  }
+
+  async function copyWordVersion(ver) {
+    if (!ver) { toast(false, '没有可复制的版本', '先在列表里选一版'); return false; }
+    const text = wordsTxt(ver.words);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        toast(true, '已复制 #' + ver.id, ver.words.length + ' 词 · 逗号分隔');
+        return true;
+      }
+    } catch (_) { /* 落回 execCommand */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      (document.body || document.documentElement).appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) { toast(true, '已复制 #' + ver.id, ver.words.length + ' 词 · 逗号分隔'); return true; }
+    } catch (_) { /* 下面的 toast */ }
+    toast(false, '复制失败', '可改用「导出 TXT」');
+    return false;
+  }
+
+  /* ---------- 词库管理弹窗：DOM ---------- */
+
+  const WM_SEARCH_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true">'
+    + '<circle cx="5" cy="5" r="3.3" fill="none" stroke="currentColor" stroke-width="1.3"/>'
+    + '<path d="M7.5 7.5L10.4 10.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+  /**
+   * 建整块弹窗 DOM（每次打开都新建，关闭整块移除 —— 监听挂在节点上，随节点一起释放，
+   * **绝不往 document 上挂**，见 步骤.md §二 D 的监听泄漏教训）。
+   * 弹窗是 .panel 的**兄弟节点**：塞进 .panel 会被 overflow:hidden 裁掉、还会跟着拖动跑。
+   */
+  function buildWordsModal() {
+    const overlay = el('div', 'wbackdrop');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '词库管理');
+
+    const card = el('div', 'wmodal');
+
+    /* 头：标题 + 版本概览 + 关闭 */
+    const head = el('div', 'wm-head');
+    const titles = el('div', 'wm-titles');
+    const meta = el('div', 'wm-meta', '');
+    titles.append(el('div', 'wm-title', '词库管理'), meta);
+    const closeX = el('button', 'wm-x', '×');
+    closeX.type = 'button';
+    closeX.title = '关闭（Esc）';
+    closeX.setAttribute('aria-label', '关闭词库管理');
+    head.append(titles, closeX);
+
+    /* 主体：左＝版本时间线，右＝内容 */
+    const bodyEl = el('div', 'wm-body');
+    const side = el('div', 'wm-side');
+
+    const main = el('div', 'wm-main');
+    const top = el('div', 'wm-top');
+    const tabs = el('div', 'wm-tabs');
+    tabs.setAttribute('role', 'tablist');
+    const tabBtns = {};
+    [['diff', '差异'], ['words', '词条'], ['edit', '编辑']].forEach((pair) => {
+      const b = el('button', 'wm-tab', pair[1]);
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.addEventListener('click', () => setWordsModalTab(pair[0]));
+      tabs.appendChild(b);
+      tabBtns[pair[0]] = b;
+    });
+
+    /* 搜索框：词条页与差异页共用；编辑页隐藏（那边是整段文本，不需要逐词搜） */
+    const searchWrap = el('label', 'wm-search');
+    const ico = el('span', 'wm-search-ico');
+    ico.innerHTML = WM_SEARCH_SVG;
+    const searchInput = el('input', 'wm-search-input');
+    searchInput.type = 'text';
+    searchInput.spellcheck = false;
+    searchInput.placeholder = '搜索该版本中的词';
+    searchInput.setAttribute('aria-label', '搜索该版本中的词');
+    searchInput.value = wordsModalState.query;
+    searchInput.addEventListener('input', () => {
+      wordsModalState.query = searchInput.value;
+      const n = refs.wordsModal;
+      if (!n) return;
+      paintWordsPane(n);
+      paintDiffPane(n);
+    });
+    searchWrap.append(ico, searchInput);
+    top.append(tabs, searchWrap);
+    main.appendChild(top);
+
+    /* —— 差异页：基准 A → 对比 B —— */
+    const paneDiff = el('div', 'wm-pane');
+    const diffBar = el('div', 'wm-bar');
+    const aField = createAppleSelect((label) => {
+      const n = refs.wordsModal;
+      const id = n && n.optMap.get(label);
+      if (!id) return;
+      wordsModalState.aId = id;
+      paintDiffPane(n);
+    });
+    const bField = createAppleSelect((label) => {
+      const n = refs.wordsModal;
+      const id = n && n.optMap.get(label);
+      if (!id) return;
+      wordsModalState.bId = id;
+      wordsModalState.selId = id;
+      paintVersionList(n);
+      paintWordsPane(n);
+      paintDiffPane(n);
+    });
+    const aWrap = el('div', 'wm-sel');
+    aWrap.append(el('span', 'wm-sel-label', '基准 A'), aField.wrap);
+    const bWrap = el('div', 'wm-sel');
+    bWrap.append(el('span', 'wm-sel-label', '对比 B'), bField.wrap);
+    const keptToggle = el('button', 'wm-check', '显示未变词');
+    keptToggle.type = 'button';
+    keptToggle.setAttribute('aria-pressed', 'false');
+    keptToggle.addEventListener('click', () => {
+      wordsModalState.showKept = !wordsModalState.showKept;
+      paintDiffPane(refs.wordsModal);
+    });
+    diffBar.append(aWrap, el('span', 'wm-arrow', '→'), bWrap, keptToggle);
+    const diffBody = el('div', 'wm-pane-body');
+    paneDiff.append(diffBar, diffBody);
+
+    /* —— 词条页：整版词条 + 搜索高亮 + 按版本导出 —— */
+    const paneWords = el('div', 'wm-pane');
+    const wordsBar = el('div', 'wm-bar');
+    const wordsInfo = el('div', 'wm-info', '');
+    const wordsActs = el('div', 'wm-acts');
+    const btnCopy = el('button', 'wm-mini', '复制');
+    const btnTxt = el('button', 'wm-mini', 'TXT');
+    const btnCsv = el('button', 'wm-mini', 'CSV');
+    const btnJson = el('button', 'wm-mini', 'JSON');
+    [btnCopy, btnTxt, btnCsv, btnJson].forEach((b) => { b.type = 'button'; });
+    btnCopy.title = '复制这一版的词（逗号分隔，可直接粘到别处）';
+    btnTxt.title = '导出 TXT：逗号分隔、不带 BOM，可原样再粘回编辑框';
+    btnCsv.title = '导出 CSV：单列 + BOM，Excel 打开不乱码';
+    btnJson.title = '导出 JSON：含版本号 / 时间戳 / 词条，便于备份';
+    const selVersion = () => findWordVersion(wordsModalState.selId) || activeWordVersion();
+    btnCopy.addEventListener('click', () => copyWordVersion(selVersion()));
+    btnTxt.addEventListener('click', () => exportWordVersion(selVersion(), 'txt'));
+    btnCsv.addEventListener('click', () => exportWordVersion(selVersion(), 'csv'));
+    btnJson.addEventListener('click', () => exportWordVersion(selVersion(), 'json'));
+    wordsActs.append(btnCopy, btnTxt, btnCsv, btnJson);
+    wordsBar.append(wordsInfo, wordsActs);
+    const chipsBox = el('div', 'word-chips wm-chips');
+    paneWords.append(wordsBar, chipsBox);
+
+    /* —— 编辑页：草稿 + 实时差异 + 保存为新版本 —— */
+    const paneEdit = el('div', 'wm-pane');
+    const editTa = el('textarea', 'wm-ta');
+    editTa.spellcheck = false;
+    editTa.placeholder = '每行一个词，或用中英文逗号分隔；下面会实时显示与当前词库的差异，确认后点「保存为新版本」';
+    editTa.value = wordsModalState.draft;
+    editTa.addEventListener('input', () => {
+      wordsModalState.draft = editTa.value;
+      wordsModalState.dirty = true;
+      paintEditMeta(refs.wordsModal);
+    });
+    const editMeta = el('div', 'wm-info', '');
+    const editDiff = el('div', 'wm-pane-body');
+    const editBar = el('div', 'wm-bar wm-edit-bar');
+    const btnReset = el('button', 'wm-btn is-plain', '还原为当前词库');
+    btnReset.type = 'button';
+    btnReset.title = '把草稿换回当前生效的词库（不写任何东西）';
+    btnReset.addEventListener('click', () => {
+      wordsModalState.draft = settings.deleteWords.join(',');
+      wordsModalState.dirty = false;
+      editTa.value = wordsModalState.draft;
+      paintEditMeta(refs.wordsModal);
+    });
+    const btnSave = el('button', 'wm-btn is-primary', '保存为新版本');
+    btnSave.type = 'button';
+    btnSave.addEventListener('click', () => saveDraftWords());
+    editBar.append(btnReset, btnSave);
+    paneEdit.append(editTa, editMeta, editDiff, editBar);
+
+    main.append(paneDiff, paneWords, paneEdit);
+    bodyEl.append(side, main);
+
+    /* 底 */
+    const foot = el('div', 'wm-foot');
+    const footHint = el('div', 'wm-foot-hint',
+      '仅保留最近 ' + WORDS_MAX_VERSIONS + ' 次 · 按「词」比较，顺序不计 · 执行时用的永远是最新一版');
+    const btnExportAll = el('button', 'wm-btn is-plain', '导出全部（JSON）');
+    btnExportAll.type = 'button';
+    btnExportAll.title = '把全部版本导成一个 JSON 文件（备份 / 换机）';
+    btnExportAll.addEventListener('click', () => exportAllWordVersions());
+    const btnClose = el('button', 'wm-btn is-plain', '关闭');
+    btnClose.type = 'button';
+    btnClose.addEventListener('click', () => closeWordsModal());
+    foot.append(footHint, el('div', 'wm-foot-gap'), btnExportAll, btnClose);
+
+    card.append(head, bodyEl, foot);
+    overlay.appendChild(card);
+
+    refs.wordsModal = {
+      overlay, card, meta, side, main, tabBtns, searchWrap, searchInput,
+      paneDiff, diffBody, aField, bField, keptToggle, optMap: new Map(),
+      paneWords, wordsInfo, chipsBox,
+      paneEdit, editTa, editMeta, editDiff, btnSave, btnReset
+    };
+
+    closeX.addEventListener('click', () => closeWordsModal());
+    // 点遮罩空白处关闭；从卡片内部开始按下的拖动不会命中 overlay 本身
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeWordsModal(); });
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeWordsModal();
+        return;
+      }
+      if (e.key === 'Tab') trapTab(e, card);
+    });
+    return overlay;
+  }
+
+  /** 把弹窗挂进 shadow（已挂则复用）。返回 nodes */
+  function mountWordsModal() {
+    const cur = refs.wordsModal;
+    if (cur && cur.overlay && cur.overlay.isConnected) return cur;
+    if (!shadow) return null;
+    shadow.appendChild(buildWordsModal());
+    return refs.wordsModal;
+  }
+
+  /** 打开弹窗。运行中不允许改词库（第 6 步要用的就是它） */
+  function openWordsModal() {
+    if (uiState.running) { toast(false, '执行中', '等当前步骤跑完再改词库'); return; }
+    closeSelectMenu();                        // 面板上的模板下拉先收起，别压在新弹窗下面
+    const wasOpen = wordsModalState.open;
+    wordsModalState.open = true;
+    if (!wasOpen) {
+      wordsModalState.returnFocus = (shadow && shadow.activeElement) || document.activeElement || null;
+      const cur = activeWordVersion();
+      const idx = wordsStore.list.findIndex((v) => v.id === (cur ? cur.id : -1));
+      const prev = idx >= 0 ? wordsStore.list[idx + 1] : null;
+      const selId = cur ? cur.id : (((wordsStore.list[0] || {}).id) || 0);
+      wordsModalState.selId = selId;
+      wordsModalState.bId = selId;
+      wordsModalState.aId = prev ? prev.id : selId;
+      if (!wordsModalState.dirty) wordsModalState.draft = settings.deleteWords.join(',');
+    }
+    const n = mountWordsModal();
+    if (!n) return;
+    n.editTa.value = wordsModalState.draft;
+    n.searchInput.value = wordsModalState.query;
+    renderWordsModal();
+    // 焦点落到关闭按钮：不自动进 textarea（沿用「打开面板不抢页面焦点」的既有约定）
+    setTimeout(() => { try { n.card.querySelector('.wm-x').focus(); } catch (_) { /* ignore */ } }, 30);
+  }
+
+  function closeWordsModal() {
+    wordsModalState.open = false;
+    wordsModalState.confirmId = 0;
+    clearConfirmTimer();
+    closeSelectMenu();                        // 弹窗里的 A/B 下拉可能正开着
+    const n = refs.wordsModal;
+    refs.wordsModal = null;
+    if (n && n.overlay) n.overlay.remove();    // 立即移除：淡出动画会在快速重开时留下第二块遮罩
+    const back = wordsModalState.returnFocus;
+    wordsModalState.returnFocus = null;
+    if (back && back.focus) setTimeout(() => { try { back.focus(); } catch (_) { /* ignore */ } }, 30);
+  }
+
+  function clearConfirmTimer() {
+    if (wordsModalState.confirmTimer) {
+      clearTimeout(wordsModalState.confirmTimer);
+      wordsModalState.confirmTimer = 0;
+    }
+  }
+
+  function renderWordsModal() {
+    const n = refs.wordsModal;
+    refreshWordsBtn();                        // 面板按钮上的 N 词 / 版数始终同步
+    if (!n || !wordsModalState.open) return;
+    paintModalHead(n);
+    paintVersionList(n);
+    paintTabState(n);
+    paintWordsPane(n);
+    paintDiffPane(n);
+    paintEditMeta(n);
+  }
+
+  function paintModalHead(n) {
+    const cur = activeWordVersion();
+    n.meta.textContent = settings.deleteWords.length + ' 词 · '
+      + wordsStore.list.length + '/' + WORDS_MAX_VERSIONS + ' 版'
+      + (cur
+        ? ' · 最新 ' + fmtVersionTime(cur.at, 'full') + '（' + fmtVersionTime(cur.at, 'rel') + '）'
+        : ' · 还没有版本');
+  }
+
+  function paintTabState(n) {
+    Object.keys(n.tabBtns).forEach((k) => {
+      const on = wordsModalState.tab === k;
+      n.tabBtns[k].classList.toggle('is-on', on);
+      n.tabBtns[k].setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    n.searchWrap.classList.toggle('is-hidden', wordsModalState.tab === 'edit');
+    n.paneDiff.classList.toggle('is-hidden', wordsModalState.tab !== 'diff');
+    n.paneWords.classList.toggle('is-hidden', wordsModalState.tab !== 'words');
+    n.paneEdit.classList.toggle('is-hidden', wordsModalState.tab !== 'edit');
+  }
+
+  function setWordsModalTab(tab) {
+    if (wordsModalState.tab === tab) return;
+    wordsModalState.tab = tab;
+    if (tab === 'edit' && !wordsModalState.dirty) {
+      wordsModalState.draft = settings.deleteWords.join(',');
+      if (refs.wordsModal) refs.wordsModal.editTa.value = wordsModalState.draft;
+    }
+    renderWordsModal();
+    // 用户主动点「编辑」= 想打字，这时候聚焦是对的（打开弹窗时不聚焦）
+    if (tab === 'edit' && refs.wordsModal) {
+      const ta = refs.wordsModal.editTa;
+      setTimeout(() => { try { ta.focus(); } catch (_) { /* ignore */ } }, 20);
+    }
+  }
+
+  /** 点某一版：标记为选中；在差异页时顺带把它设成「对比 B」（A 自动取它上一版） */
+  function selectWordVersion(id) {
+    const ver = findWordVersion(id);
+    if (!ver) return;
+    wordsModalState.selId = id;
+    if (wordsModalState.tab === 'diff') {
+      const idx = wordsStore.list.findIndex((v) => v.id === id);
+      const prev = idx >= 0 ? wordsStore.list[idx + 1] : null;
+      wordsModalState.bId = id;
+      wordsModalState.aId = prev ? prev.id : id;
+    }
+    renderWordsModal();
+  }
+
+  function startRestoreConfirm(id) {
+    wordsModalState.confirmId = id;
+    clearConfirmTimer();
+    // 不弹二级确认框：就地变成「确认恢复 / 取消」，6 秒后自动退回
+    wordsModalState.confirmTimer = setTimeout(() => {
+      wordsModalState.confirmId = 0;
+      wordsModalState.confirmTimer = 0;
+      paintVersionList(refs.wordsModal);
+    }, 6000);
+    paintVersionList(refs.wordsModal);
+  }
+
+  /** 恢复某一版 = **生成一个新版本**（历史 append-only：误恢复后还能找回来） */
+  function doRestore(id) {
+    const ver = findWordVersion(id);
+    if (!ver) return;
+    clearConfirmTimer();
+    wordsModalState.confirmId = 0;
+    const before = settings.deleteWords.slice();
+    if (!commitWords(ver.words, 'restore', '恢复自 #' + ver.id)) {
+      paintVersionList(refs.wordsModal);
+      return;
+    }
+    const d = diffWords(before, settings.deleteWords);
+    const cur = activeWordVersion();
+    wordsModalState.dirty = false;
+    wordsModalState.draft = settings.deleteWords.join(',');
+    wordsModalState.selId = cur ? cur.id : id;
+    wordsModalState.bId = wordsModalState.selId;
+    const idx = wordsStore.list.findIndex((v) => v.id === wordsModalState.selId);
+    wordsModalState.aId = idx >= 0 && wordsStore.list[idx + 1]
+      ? wordsStore.list[idx + 1].id
+      : wordsModalState.selId;
+    if (refs.wordsModal) refs.wordsModal.editTa.value = wordsModalState.draft;
+    renderWordsModal();
+    log('词库已恢复自 #' + ver.id, '+' + d.added.length + ' −' + d.removed.length);
+  }
+
+  /** 保存编辑页草稿 */
+  function saveDraftWords() {
+    const n = refs.wordsModal;
+    const words = parseWords(wordsModalState.draft);
+    if (!commitWords(words, 'manual', '弹窗编辑')) {
+      paintEditMeta(n);
+      return;
+    }
+    wordsModalState.dirty = false;
+    wordsModalState.draft = settings.deleteWords.join(',');
+    if (n) n.editTa.value = wordsModalState.draft;
+    const cur = activeWordVersion();
+    wordsModalState.selId = cur ? cur.id : wordsModalState.selId;
+    wordsModalState.bId = wordsModalState.selId;
+    const idx = wordsStore.list.findIndex((v) => v.id === wordsModalState.selId);
+    wordsModalState.aId = idx >= 0 && wordsStore.list[idx + 1]
+      ? wordsStore.list[idx + 1].id
+      : wordsModalState.selId;
+    // 存完直接跳到「差异」：让人马上看见"我刚存了什么"，而不是停在输入框里猜
+    wordsModalState.tab = 'diff';
+    renderWordsModal();
+  }
+
+  /* ---------- 词库管理弹窗：三块画布 ---------- */
+
+  function paintVersionList(n) {
+    if (!n) return;
+    const side = n.side;
+    side.textContent = '';
+    if (!wordsStore.list.length) {
+      side.appendChild(el('div', 'wm-empty', '还没有任何版本。改一次词库就会产生第 1 版。'));
+      return;
+    }
+    const cur = activeWordVersion();
+    wordsStore.list.forEach((ver, i) => {
+      const prev = wordsStore.list[i + 1] || null;         // 更旧的那一版
+      const d = prev ? diffWords(prev.words, ver.words) : null;
+      const isCur = !!cur && cur.id === ver.id;
+      const row = el('div', 'wm-item' + (ver.id === wordsModalState.selId ? ' is-sel' : ''));
+      row.tabIndex = 0;
+      row.title = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'full') + ' · ' + ver.words.length + ' 词'
+        + (ver.note ? ' · ' + ver.note : '');
+      const topRow = el('div', 'wm-item-top');
+      topRow.append(el('span', 'wm-id', '#' + ver.id));
+      if (isCur) topRow.append(el('span', 'wm-cur', '当前'));
+      topRow.append(el('span', 'wm-time', fmtVersionTime(ver.at, 'short')));
+      const botRow = el('div', 'wm-item-bot');
+      botRow.append(el('span', 'wm-count', ver.words.length + ' 词'));
+      if (d && (d.added.length || d.removed.length || d.orderOnly)) {
+        const delta = el('span', 'wm-delta');
+        if (d.added.length) delta.appendChild(el('b', 'is-add', '+' + d.added.length));
+        if (d.removed.length) delta.appendChild(el('b', 'is-del', '−' + d.removed.length));
+        if (!d.added.length && !d.removed.length && d.orderOnly) delta.appendChild(el('b', 'is-order', '⇅'));
+        botRow.appendChild(delta);
+      }
+      const acts = el('div', 'wm-item-acts');
+      if (wordsModalState.confirmId === ver.id) {
+        const yes = el('button', 'wm-mini is-danger', '确认恢复');
+        yes.type = 'button';
+        yes.addEventListener('click', (e) => { e.stopPropagation(); doRestore(ver.id); });
+        const no = el('button', 'wm-mini', '取消');
+        no.type = 'button';
+        no.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearConfirmTimer();
+          wordsModalState.confirmId = 0;
+          paintVersionList(refs.wordsModal);
+        });
+        acts.append(yes, no);
+      } else {
+        if (!isCur) {
+          const rBtn = el('button', 'wm-mini', '恢复');
+          rBtn.type = 'button';
+          rBtn.title = '把这一版重新设为当前词库（会生成一个新版本，历史不删）';
+          rBtn.addEventListener('click', (e) => { e.stopPropagation(); startRestoreConfirm(ver.id); });
+          acts.appendChild(rBtn);
+        }
+        const eBtn = el('button', 'wm-mini', '导出');
+        eBtn.type = 'button';
+        eBtn.title = '导出这一版为 TXT（逗号分隔、无 BOM，可直接粘回编辑框）';
+        eBtn.addEventListener('click', (e) => { e.stopPropagation(); exportWordVersion(ver, 'txt'); });
+        acts.appendChild(eBtn);
+      }
+      row.append(topRow, botRow, acts);
+      row.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.wm-item-acts')) return;
+        selectWordVersion(ver.id);
+      });
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectWordVersion(ver.id); }
+      });
+      side.appendChild(row);
+    });
+  }
+
+  function paintWordsPane(n) {
+    if (!n) return;
+    const ver = findWordVersion(wordsModalState.selId) || activeWordVersion();
+    n.chipsBox.textContent = '';
+    if (!ver) {
+      n.wordsInfo.textContent = '还没有版本';
+      n.chipsBox.appendChild(el('div', 'word-empty', '还没有任何词库版本'));
+      return;
+    }
+    const q = wordsModalState.query.trim();
+    const list = q
+      ? ver.words.filter((w) => w.toLowerCase().includes(q.toLowerCase()))
+      : ver.words;
+    n.wordsInfo.textContent = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'short')
+      + ' · ' + ver.words.length + ' 词'
+      + (q ? ' · 命中 ' + list.length : '')
+      + (ver.id === ((activeWordVersion() || {}).id) ? ' · 当前生效' : '');
+    if (!list.length) {
+      n.chipsBox.appendChild(el('div', 'word-empty',
+        q ? '这一版里没有含「' + q + '」的词' : '这一版是空词库'));
+      return;
+    }
+    list.forEach((w) => {
+      const chip = el('span', 'word-chip');
+      fillHighlight(chip, w, q);
+      chip.title = w;
+      n.chipsBox.appendChild(chip);
+    });
+  }
+
+  function paintDiffPane(n) {
+    if (!n) return;
+    /* 下拉选项：文案要唯一（带 #id），所以用 Map 从文案找回 id */
+    n.optMap.clear();
+    const opts = wordsStore.list.map((ver, i) => {
+      const label = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'short') + ' · ' + ver.words.length + ' 词'
+        + (i === 0 ? ' · 当前' : '');
+      n.optMap.set(label, ver.id);
+      return label;
+    });
+    const labelOf = (id) => {
+      for (const pair of n.optMap.entries()) if (pair[1] === id) return pair[0];
+      return '';
+    };
+    const oldest = wordsStore.list.length ? wordsStore.list[wordsStore.list.length - 1] : null;
+    const newest = activeWordVersion();
+    const aId = findWordVersion(wordsModalState.aId) ? wordsModalState.aId : (oldest ? oldest.id : 0);
+    const bId = findWordVersion(wordsModalState.bId) ? wordsModalState.bId : (newest ? newest.id : 0);
+    n.aField.setOptions(opts, { value: labelOf(aId), placeholder: '暂无版本' });
+    n.bField.setOptions(opts, { value: labelOf(bId), placeholder: '暂无版本' });
+    n.aField.setDisabled(!opts.length);
+    n.bField.setDisabled(!opts.length);
+    n.keptToggle.classList.toggle('is-on', !!wordsModalState.showKept);
+    n.keptToggle.setAttribute('aria-pressed', wordsModalState.showKept ? 'true' : 'false');
+
+    const box = n.diffBody;
+    box.textContent = '';
+    const va = findWordVersion(aId);
+    const vb = findWordVersion(bId);
+    if (wordsStore.list.length < 2) {
+      box.appendChild(el('div', 'wm-empty',
+        '只有 1 个版本，暂时没法对比 —— 改一次词库（或恢复某一版）就会产生第 2 版。'));
+      return;
+    }
+    if (!va || !vb) {
+      box.appendChild(el('div', 'wm-empty', '没有可对比的版本'));
+      return;
+    }
+    if (va.id === vb.id) {
+      box.appendChild(el('div', 'wm-empty', '基准和对比选的是同一版（#' + va.id + '），换一个再比。'));
+      return;
+    }
+
+    const d = diffWords(va.words, vb.words);
+    const q = wordsModalState.query.trim();
+    const ql = q.toLowerCase();
+    const hit = (w) => !ql || w.toLowerCase().includes(ql);
+
+    const sum = el('div', 'wm-sum');
+    const sumItem = (cls, num, text) => {
+      const s = el('span', 'wm-sum-item');
+      s.append(el('b', cls || '', String(num)), el('span', '', text));
+      return s;
+    };
+    sum.append(
+      sumItem('is-add', d.added.length, '新增'),
+      sumItem('is-del', d.removed.length, '删除'),
+      sumItem('', d.kept, '未变'),
+      el('span', 'wm-sum-who', '#' + va.id + ' → #' + vb.id)
+    );
+    box.appendChild(sum);
+
+    if (!d.added.length && !d.removed.length && !d.orderOnly) {
+      box.appendChild(el('div', 'wm-empty',
+        '这两版词条完全相同（#' + va.id + ' 与 #' + vb.id + '，共 ' + va.words.length + ' 词）'));
+      return;
+    }
+    if (d.orderOnly) {
+      box.appendChild(el('div', 'wm-note', '词条相同，只有顺序不同 —— 顺序不影响删词结果（执行前会按长度重排）'));
+    }
+
+    const rows = el('div', 'wm-diff');
+    const pushRow = (kind, w) => {
+      if (!hit(w)) return;
+      const row = el('div', 'wm-diff-row is-' + kind);
+      row.append(el('span', 'wm-sign', kind === 'del' ? '−' : (kind === 'add' ? '+' : ' ')));
+      const txt = el('span', 'wm-diff-text');
+      fillHighlight(txt, w, q);
+      row.appendChild(txt);
+      rows.appendChild(row);
+    };
+    if (d.removed.length) {
+      rows.appendChild(wmSection('已删除 −' + d.removed.length, 'del'));
+      d.removed.forEach((w) => pushRow('del', w));
+    }
+    if (d.added.length) {
+      rows.appendChild(wmSection('新增 +' + d.added.length, 'add'));
+      d.added.forEach((w) => pushRow('add', w));
+    }
+    if (wordsModalState.showKept) {
+      const keptWords = vb.words.filter((w) => va.words.indexOf(w) >= 0);
+      rows.appendChild(wmSection('未变 ' + keptWords.length, 'keep'));
+      keptWords.forEach((w) => pushRow('keep', w));
+    }
+    // 搜索把变化项全滤掉时，别让人对着空白以为"没差异"
+    if (!rows.querySelector('.wm-diff-row') && q) {
+      box.appendChild(el('div', 'wm-empty', '两版之间没有含「' + q + '」的变化项'));
+      return;
+    }
+    box.appendChild(rows);
+  }
+
+  /** 编辑页：识别统计 + 与**当前生效词库**的实时差异 + 按钮文案（带 +n −m） */
+  function paintEditMeta(n) {
+    if (!n) return;
+    const raw = String(wordsModalState.draft || '');
+    const words = parseWords(raw);
+    const tokens = raw.split(/[,，\r\n、]+/).map((w) => w.trim()).filter(Boolean).length;
+    const dup = Math.max(0, tokens - words.length);
+    const d = diffWords(settings.deleteWords, words);
+    const changed = !!(d.added.length || d.removed.length || d.orderOnly);
+
+    n.btnSave.disabled = !words.length || !changed;
+    n.btnSave.textContent = !words.length
+      ? '保存为新版本'
+      : (changed ? '保存为新版本（+' + d.added.length + ' −' + d.removed.length + '）' : '保存为新版本（无变化）');
+    n.editMeta.textContent = words.length
+      ? '识别 ' + words.length + ' 词' + (dup ? ' · 去重 ' + dup : '') + (wordsModalState.dirty ? ' · 草稿未保存' : '')
+      : '没解析到词（空内容不会清空词库）';
+
+    const box = n.editDiff;
+    box.textContent = '';
+    if (!words.length) {
+      box.appendChild(el('div', 'wm-empty', '粘贴词条后，这里会实时显示与当前词库的差异'));
+      return;
+    }
+    if (!changed) {
+      box.appendChild(el('div', 'wm-empty', '与当前词库一致，保存不会产生新版本'));
+      return;
+    }
+    const rows = el('div', 'wm-diff');
+    if (d.removed.length) {
+      rows.appendChild(wmSection('将删除 −' + d.removed.length, 'del'));
+      d.removed.forEach((w) => {
+        const row = el('div', 'wm-diff-row is-del');
+        row.append(el('span', 'wm-sign', '−'), el('span', 'wm-diff-text', w));
+        rows.appendChild(row);
+      });
+    }
+    if (d.added.length) {
+      rows.appendChild(wmSection('将新增 +' + d.added.length, 'add'));
+      d.added.forEach((w) => {
+        const row = el('div', 'wm-diff-row is-add');
+        row.append(el('span', 'wm-sign', '+'), el('span', 'wm-diff-text', w));
+        rows.appendChild(row);
+      });
+    }
+    if (d.orderOnly) rows.appendChild(el('div', 'wm-note', '词条相同，只有顺序变了'));
+    box.appendChild(rows);
   }
 
 
@@ -4657,7 +5962,7 @@
   function syncSettingsUI() {
     if (!refs.settings) return;
     renderSettingsOptions();
-    renderWordsChips();
+    refreshWordsBtn();
   }
 
 
@@ -4679,49 +5984,21 @@
     fields.appendChild(readBtn);
     box.appendChild(fields);
 
-    /* 词库：「管理词库（N）」按钮占满整行、居中；展开后才显示词标签 + 输入框 + 立即更新 */
+    /* 词库：面板里只剩一个入口。点开是**居中弹窗**（版本时间线 / 差异对比 / 版本内搜索 /
+       编辑保存 / 按版本导出）。v1.17.0 起不再有内联展开区：252px 的面板塞不下差异视图，
+       而且那块展开区会让人误以为「词库就是这个输入框」。 */
     const wordsWrap = el('div', 'set-field');
     const wordsBtn = el('button', 'set-btn is-plain set-words-toggle', '管理词库（0）');
     wordsBtn.type = 'button';
-    wordsBtn.title = '展开/收起词库：查看全部词条、粘贴新词条后点「立即更新」（不会自动保存）';
     wordsBtn.addEventListener('click', () => {
-      if (uiState.running) return;
-      setWordsOpen(refs.setWordsBody.classList.contains('is-hidden'));
+      if (uiState.running) return;      // 执行中不改词库：第 6 步要用的就是它
+      openWordsModal();
     });
-
-    const wordsBody = el('div', 'set-words-body is-hidden');
-
-    const chips = el('div', 'word-chips');
-    // 滚动条默认隐藏：滚动时才淡显（滚完 800ms 淡出）；悬停/按住由 CSS 负责变深
-    let chipsScrollTimer = 0;
-    chips.addEventListener('scroll', () => {
-      chips.classList.add('is-scrolling');
-      clearTimeout(chipsScrollTimer);
-      chipsScrollTimer = setTimeout(() => chips.classList.remove('is-scrolling'), 800);
-    }, { passive: true });
-
-    const importTa = el('textarea', 'set-textarea set-import-ta');
-    importTa.spellcheck = false;
-    // v1.13.0：输入框不再自动保存 —— 只有点「立即更新」才写词库，边打字不会改动任何数据
-    importTa.placeholder = '粘贴词条，用中英文逗号分隔：短袖,弹力，透气（输入后点「立即更新」才生效）';
-
-    const applyBtn = el('button', 'set-btn is-plain set-apply-words', '立即更新');
-    applyBtn.type = 'button';
-    applyBtn.title = '按中英文逗号解析输入框内容，整体替换词库';
-    applyBtn.addEventListener('click', () => {
-      if (uiState.running) return;
-      // 只在这里写词库（v1.13.0 起没有防抖自动保存）
-      applyWordImport(importTa.value);
-    });
-
-    wordsBody.append(chips, importTa, applyBtn);
-    wordsWrap.append(wordsBtn, wordsBody);
+    wordsWrap.appendChild(wordsBtn);
     box.appendChild(wordsWrap);
 
     refs.settings = box;
     refs.setReadTpl = readBtn;
-    refs.setWordsChips = chips;
-    refs.setWordsBody = wordsBody;
     refs.setWordsBtn = wordsBtn;
     return box;
   }
@@ -4762,7 +6039,7 @@
       syncSettingsUI();
       if (isPanelCollapsed()) setCollapsed(false);   // 同步 fold 图标与持久化状态
     } else {
-      setWordsOpen(false);   // 离开设置页时把词库区收起
+      closeWordsModal();     // 离开设置页时把词库弹窗关掉（它挂在 shadow 里，不随视图隐藏）
       closeSelectMenu();     // 切页时一并收起下拉浮层
     }
     applyView();
@@ -4812,7 +6089,7 @@
     const status = el('div', 'status', '就绪');
     const gear = el('button', 'gear', '⚙');
     gear.type = 'button';
-    gear.title = '设置：模板 / 词库（模板选中即存；词库点「立即更新」才存） · 面板 v' + SCRIPT_VERSION;
+    gear.title = '设置：模板 / 词库（模板选中即存；词库要在弹窗里点「保存为新版本」才写） · 面板 v' + SCRIPT_VERSION;
     const fold = el('button', 'fold', '−');
     fold.title = '折叠 / 展开';
     /* 「更新」标记：默认隐藏，检测到 GreasyFork 版本与本地不一致时显形。
@@ -4972,6 +6249,16 @@
     uiState.mounted = true;
     render();
     syncSettingsUI();
+    // 面板被页面冲掉重建时，把**开着的词库弹窗**按 wordsModalState 原样再建一次
+    // （不做这一步，用户看到的就是「编辑到一半弹窗突然没了」，草稿也就白写了）
+    if (wordsModalState.open) {
+      const wn = mountWordsModal();
+      if (wn) {
+        wn.editTa.value = wordsModalState.draft;
+        wn.searchInput.value = wordsModalState.query;
+        renderWordsModal();
+      }
+    }
   }
 
   /* ============================ 启动 ============================ */
@@ -5000,6 +6287,9 @@
 
   // 先读用户设置，再建面板（面板要按设置渲染词表与模板选项）
   loadSettings();
+  // 再读词库版本库：读不到就用当前词库生成基线版本，并在读完后立刻对账
+  // （不变量：最新版 === settings.deleteWords，见「词库版本库」一节）
+  loadWordStore();
 
   // 尽早装上「选中集旁听器」：它必须在页面发出第一次 getCollectItemInfoList 之前就位，
   // 否则拿不到权威选中集（详见 verifySaved 说明 ①）。装它只旁听、不改页面行为。
@@ -5067,9 +6357,10 @@
     refs.tplSelects = null;
     refs.menuLayer = null;
     refs.setReadTpl = null;
-    refs.setWordsChips = null;
-    refs.setWordsBody = null;
     refs.setWordsBtn = null;
+    // 词库弹窗整块 DOM 挂在 shadow 里，会随 shadow 一起被丢弃；弹窗的「开着吗 / 看哪一版 /
+    // 草稿」都在 wordsModalState（模块级内存）里，buildPanel() 末尾会按它原样重建。
+    refs.wordsModal = null;
     boot();
   }, 800);   // 500→800ms：够快让人察觉不到面板消失，也不会和页面自己的重渲染抢节奏
 })();

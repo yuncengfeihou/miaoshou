@@ -41,11 +41,11 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.16.0，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.17.0，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `README.md` | 门面：安装 / 用法 / 三条红线 / 自检命令 / 当前版本变更摘要 |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
-| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；8 个脚本请保留**：5 个 `test-*.mjs`（纯函数 + 虚拟滚动仿真覆盖）+ 1 个 `mutate-coverage.mjs`（变异验证）+ 2 个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
+| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；9 个脚本请保留**：6 个 `test-*.mjs`（纯函数 + 虚拟滚动仿真覆盖 + 词库版本库）+ 1 个 `mutate-coverage.mjs`（变异验证）+ 2 个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
 
 > **`@name` 从 2026-10-20 起固定不带版本号**：版本只由 `@version` / `SCRIPT_VERSION` 表达。
 > 若 TM 里还留着旧 `@name`（带 `1.15.x` 前缀）的条目，升级后请删除；否则 TM 会把它当成另一个脚本，
@@ -55,7 +55,7 @@
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.16.0，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.17.0，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -70,12 +70,13 @@
 | 视图 | 齿轮切「设置页 ↔ 执行页」；**位置 / 折叠 / 视图跨刷新持久化**（`localStorage['msxb-ui-v1']`） |
 | 主按钮 | 「一键编辑」↔ 运行中「停止编辑 · 12s」（按钮内实时计时），两态无边框不发光，可随时中断 |
 | 设置区 | 三类模板下拉（自绘）+「读取模板列表」**三条链路各自直连**（失败自动回落开弹窗） |
-| 词库 | 只在点「立即更新」时才写，输入框不自动保存 |
+| 词库 | v1.17.0：只有 `commitWords()` 能改它（弹窗「保存为新版本」/ 恢复历史）；执行侧只读 `settings.deleteWords` |
+| 词库版本库 | 居中弹窗 + 遮罩：最近 10 版（带时间戳）、任意两版 diff（按词集合 · 大小写敏感）、版本内搜索、按版本导出 TXT/CSV/JSON、编辑页实时差异。存储 `localStorage['msxb-words-v1']`；**不变量：最新版 === `settings.deleteWords`**（加载后 + 每次开跑前对账，方向只有「实际值 → 历史」） |
 | 落库复核 | 每步保存后调接口核对结果（v1.15.0，见 §5.6） |
 | 等待策略 | v1.16.0：新判据一律「条件等待 + **连续两次采样成立**」(`waitStable`)，超时**抛错不吞**；提速只来自去掉空等 |
 | 版本检测 | 每次刷新比对 GreasyFork `/scripts/600852.json`，不一致显示「更新」 |
 
-**版本演进不在此记录。** 想知道某处为什么这样写，按主题查 `步骤.md` §二 A–E（落库复核见 §二 C 与 §5.6）。
+**版本演进不在此记录。** 想知道某处为什么这样写，按主题查 `步骤.md` §二 A–F（落库复核见 §二 C 与 §5.6，词库版本与弹窗见 §二 F）。
 
 **未验证/未做**（接手先看）：
 
@@ -93,6 +94,12 @@
    ② `setAllColors` 的 `goPage` 失败只 `warn` + `continue` → **整页漏改不进 `wrongRows`**。
       **仍未修**（`test-color-coverage.mjs` 的 KNOWN 用例）；但正常业务量走不到 ——
       「未发布」≤400 条、每个分页入口先切 500 条/页 → `pages === 1`。
+6. **词库弹窗：逻辑与 DOM 交互已验证，视觉与重建路径未验。** `test-words-store.mjs` 覆盖存储 / 对账 /
+   裁剪 / diff / 配额；另外在**本地空白页**（`about:blank` 注入 `inject-body.js`，与妙手无关）跑通
+   打开弹窗 → 编辑保存生成第 2 版 → diff 行（−1 +2）→ 搜索高亮（命中 5/37）→ 恢复生成第 3 版，
+   层级实测 遮罩 3001 < 下拉 3002 < toast 3003。**未做**：① 妙手真页面（红线 3，需你同意）；
+   ② 视觉尺寸（那次窗口 viewport 是 0×0，量不到布局）；③ 面板被页面冲掉后按 `wordsModalState`
+   重建弹窗的路径 —— 这条只能在真页面触发。
 
 ---
 
@@ -243,6 +250,16 @@ makeTitleBuilder 标题改写纯函数（预览改写与落库复核共用同一
                   resolveSizeTemplateId（模板名 → 该类目 id）
 
 设置              loadSettings / saveSettings / parseWords / rememberTemplates
+
+词库版本库        WORDS_STORE_KEY / WORDS_MAX_VERSIONS / wordsStore{seq,list}
+                  loadWordStore / saveWordStore（配额失败丢最旧一版重试）/ pruneWordVersions
+                  pushWordVersion（seq 单调、裁剪不回收）/ syncActiveWordVersion（对账，铁律②）
+                  diffWords（按词集合 · 大小写敏感 · orderOnly）/ commitWords（唯一写入口）
+词库弹窗          wordsModalState（跨面板重建保留）/ buildWordsModal / mountWordsModal
+                  open·closeWordsModal / renderWordsModal / paintModalHead / paintVersionList
+                  paintTabState / paintWordsPane（含搜索高亮 fillHighlight）/ paintDiffPane
+                  paintEditMeta / setWordsModalTab / selectWordVersion / startRestoreConfirm
+                  doRestore / saveDraftWords / exportWordVersion / exportAllWordVersions
 uiPersist         loadUiState / saveUiState / setCollapsed（localStorage['msxb-ui-v1']）
 timer             startTimer / stopTimer（只改 .main-btn-time，不触发整面板重排）
 
@@ -264,6 +281,8 @@ timer             startTimer / stopTimer（只改 .main-btn-time，不触发整�
 > refs `setTplToggle / setTplHint / setTplFields / setImportHint / setImport / setImportBtn`。
 > 死代码清理又删掉：`SEL_RADIO / SEL_CHECKBOX / isChecked / uiState.mode / refs.setImportTa /
 > settings.knownTemplates / toggleView(force)`。
+> v1.17.0 词库改为弹窗后删除：`renderWordsChips / wordsBtnText / setWordsOpen / applyWordImport /
+> refs.setWordsChips / refs.setWordsBody` 与 CSS `.set-words-body / .set-import-ta / .set-apply-words`。
 
 ---
 
@@ -326,8 +345,8 @@ git -c http.proxy=http://127.0.0.1:7897 push  origin main
 ### 入库范围
 
 **入库**：`妙手采集箱助手.user.js`（交付物）、`README.md`、`AGENTS.md`、`步骤.md`、`审查报告.md`、
-`.playwright-mcp/` 下 **8 个脚本**（5 个 `test-*.mjs` + `mutate-coverage.mjs` + 2 个 `make-inject*.mjs`，共约 47 KB）。
-这 8 个脚本是唯一能验证「前置条件崩了会不会静默成功」的手段 —— 真网页跑不出这些分支（未发布只有个位数条、
+`.playwright-mcp/` 下 **9 个脚本**（6 个 `test-*.mjs` + `mutate-coverage.mjs` + 2 个 `make-inject*.mjs`，共约 61 KB）。
+这 9 个脚本是唯一能验证「前置条件崩了会不会静默成功」的手段 —— 真网页跑不出这些分支（未发布只有个位数条、
 `goPage` 不会按需失败、变异测试要改源码），只有真网页能验选择器与渲染时序。**两者互补，不可替代**。
 
 **不入库**（`.gitignore` 已挡）：`inject-body.js` / `inject-test.js` 等注入体产物（可重建）、
@@ -363,6 +382,7 @@ Select-String -Path "妙手采集箱助手.user.js" -Pattern "发布"  # 红线�
 node .playwright-mcp/test-judgesaved.mjs      # 19 例：6 该通过 + 13 该失败
 node .playwright-mcp/test-attachverify.mjs    # 8 例：失败优先 / 不可用 / 通过 / null / 截断 / noAssertion
 node .playwright-mcp/test-settings.mjs        # 7 例：knownTemplates 只迁移一次、不写回/回灌
+node .playwright-mcp/test-words-store.mjs     # 27 例 + 3 变异：词库版本库 diff/裁剪/对账/配额/不变量
 node .playwright-mcp/test-title-coverage.mjs  # 8 例：虚拟滚动覆盖/收敛 + expected 读不到必须抛错
 node .playwright-mcp/test-color-coverage.mjs  # 3 例 + 2 KNOWN：颜色图分页遍历/翻页失败
 node .playwright-mcp/mutate-coverage.mjs      # 8 变异：证明上面两个不是恒真（M7 专测 T1）

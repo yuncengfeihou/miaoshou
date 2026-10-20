@@ -164,6 +164,10 @@ function buildEnv({ table, words, prefix }) {
     textOf: (el) => ((el && (el.innerText || el.textContent)) || '').trim(),
     setNativeValue: (el, v) => { el.value = v; writes.push(v); },
     assertPageVisible: () => {},
+    // v1.17.0：stepTitle 开头会调 syncActiveWordVersion() 对账词库版本（方向只有
+    // settings → 版本库）。这里用桩函数：对账逻辑本身在 test-words-store.mjs 里单独覆盖，
+    // 本文件只关心「覆盖断言 + 写入」。
+    syncActiveWordVersion: () => false,
     openBatchEdit: async () => table.root,
     ensureRuleMode: async () => {},
     setPreviewPageSize: async () => '500条/页',
