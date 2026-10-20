@@ -88,7 +88,7 @@
 
   const STORE_KEY = 'msxb-settings-v2';
 
-  /** 三类模板：各自独立记忆预设值（默认＝页面下拉里的第一个选项） */
+  /** 三类模板：各自独立记忆选中的模板名（默认＝页面下拉里的第一个选项） */
   const TPL_KEYS = [
     { key: 'product', label: '产品模板' },
     { key: 'sku', label: 'SKU 模板' },
@@ -97,14 +97,15 @@
 
   /**
    * 可在面板里手动修改的设置。
-   * 坑 28：设置必须落 localStorage —— SPA 切路由会重建面板，
-   * 只存内存的话用户改完词库、一旦换页就回到默认值，等于白改。
+   * 必须落 localStorage：刷新页面会重新执行脚本、模块级变量归零，
+   * 只存内存的话用户改完词库 / 模板，一刷新就回到默认值，等于白改。
+   * （面板被页面冲掉时会重建，但重建不丢模块级状态，真正会丢的是刷新。）
    */
   const settings = {
-    // 过滤词词库：面板里只读展示，「更新词库」按中英文逗号解析后整体替换
+    // 过滤词词库：面板里只读展示，「立即更新」按中英文逗号解析后整体替换
     deleteWords: [...CFG.deleteWords],
-    // 三类模板的预设值＝面板下拉里选中的模板名；空串＝跟随页面下拉的第一个选项。
-    // v1.8.0 起没有「模板预设」开关：设置里是什么就用什么（改动自动防抖保存）
+    // 三类模板的目标值＝面板下拉里选中的模板名；空串＝跟随页面下拉的第一个选项。
+    // v1.8.0 起没有「模板预设」开关：设置里是什么就用什么（选中即保存，无防抖）
     tpl: { product: CFG.productTemplate, sku: CFG.skuTemplate, sizeChart: CFG.sizeChartTemplate },
     tplOptions: {
       product: [CFG.productTemplate],
@@ -117,7 +118,7 @@
    * 标题改写纯函数：删词 + 规整标点 + 唯一前缀。
    *
    * 提到模块级（v1.15.0）是为了让**两个地方用同一份实现**：
-   *   ① 第 5 步在预览 textarea 里算「应该改成什么」；
+   *   ① 第 6 步在预览 textarea 里算「应该改成什么」；
    *   ② `verifySaved()` 在保存后用接口返回的 title 复算一次做落库复核。
    * 若两边各写一份，任何一处漏改都会让复核「自己认证自己」，等于没复核。
    *
@@ -139,7 +140,7 @@
     };
   }
 
-  /** 用当前词库设置构造标题改写器（第 5 步与落库复核共用） */
+  /** 用当前词库设置构造标题改写器（第 6 步与落库复核共用） */
   function currentTitleBuilder() {
     const words = [...settings.deleteWords].filter(Boolean).sort((a, b) => b.length - a.length);
     return makeTitleBuilder(words);
@@ -463,8 +464,7 @@
       renderUpdateBadge();
       log('版本检测：远端 ' + remote + ' / 本地 ' + SCRIPT_VERSION);
     } catch (e) {
-      // 拉不到就保持「不提示」，绝不误报新版本；失败也缓存 1 小时，避免每刷新一次就重试
-      // 拉不到就保持「不提示」，绝不误报新版本；失败也落缓存（含 error），供下一轮冷却判断
+      // 拉不到就保持「不提示」，绝不误报新版本；失败也落缓存（含 error），供下一轮 60s 冷却判断
       updState = { at: Date.now(), remote: '', error: String((e && e.message) || e) };
       saveUpdCache();
       renderUpdateBadge();
@@ -476,9 +476,10 @@
 
   /**
    * 元素是否真的渲染可见。
-   * 坑 23：Element Plus 的下拉/浮层用 <teleport> 传送到 body 末尾且 position:fixed，
-   * 这类元素 offsetParent === null，用 `offsetParent` 做可见性判断会永远判为不可见
-   * （颜色图「选中全部」菜单就因此永远找不到，等待 20s 后超时卡死）。
+   * 见 步骤.md §二 E（接口与数据）。Element Plus 的下拉/浮层用 <teleport> 传送到
+   * body 末尾且 position:fixed；这类元素 offsetParent === null，用 `offsetParent`
+   * 做可见性判断会永远判为不可见（颜色图「选中全部」菜单就因此永远找不到，
+   * 等待 20s 后超时卡死）。
    */
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -537,7 +538,7 @@
    *   `label.jx-radio-button` 的 `is-active` / `input.checked`：
    *     全部 / 定时发布 / 已发布  → 直接拒绝
    *     未发布                    → 放行
-   *     读不到筛选条              → **拒绝**（拿不到证据就不许通过，见坑 62）
+   *     读不到筛选条              → **拒绝**（拿不到证据就不许通过，见 步骤.md §二 C）
    */
 
   /** 采集箱的状态筛选 Tab（全部 / 未发布 / 定时发布 / 已发布） */
@@ -755,10 +756,11 @@
    *    实测反例：34 条标题**本来就已经是目标值**，183 条才会变；颜色也有商品本来就叫「花色」。
    *    若用「前后不同即通过」，这些商品会被误判成失败。所以每个步骤都给一个**绝对判据**。
    *
-   * ④ **模板类步骤（产品/SKU 模板）只能「见证变化」，不能「断言身份」**。
+   * ④ **模板类步骤（产品/SKU 模板）没有可断言的目标**。
    *    实测：`saleAttributes[].templatePid` 是 1755426/1755427 这类平台属性 id，
    *    与 `itemTemplateId`（1062367）和 `skuPropTemplateId`（575646）**都不在一个号段**，
-   *    接口也不返回当前用了哪个模板。所以这两步只报「属性有没有变化」，不做硬断言。
+   *    接口也不返回当前用了哪个模板。所以这两步的判据只标注 `noAssertion`，
+   *    不做 before/after 比对 —— 不要把它当成「已核对」。
    *
    * ⑤ 复核失败**不改流程成功与否的结论**，只补一条明确的错误 —— 因为此时数据已经落库了，
    *    报「步骤失败」会误导人去重跑（重跑会二次改标题）。所以用 `verifyFail` 单独标记。
@@ -832,7 +834,7 @@
 
   /**
    * 监听页面自己发出的 `getCollectItemInfoList`（XHR）以取得**权威选中集**。
-   * 同时把「保存前」的字段快照顺手存下来，供「见证变化」类步骤比对。
+   * 同时把「保存前」的字段快照顺手存下来，供需要前值的判据（标题）使用。
    *
    * 实测：页面用的是 **XHR 而不是 fetch**（只包 fetch 抓不到任何东西）。
    * 包法对调用方完全透明：不改写返回值、不消费 responseText，只旁听。
@@ -959,11 +961,11 @@
       case 'productTpl':
       case 'skuTpl': {
         // 接口不暴露「用了哪个模板」（templatePid 与 itemTemplateId / skuPropTemplateId 不同号段），
-        // 这两步**没有**可断言的目标值。如实标注为「无可断言目标」，不伪装成判据通过。
+        // 这两步**没有**可断言的目标值：返回 ok 只为不阻断流程，同时带 noAssertion 标明「未核对」。
         return { ok: true, note: '该步骤无可断言的落库目标（接口不暴露模板 id）', noAssertion: true };
       }
       default:
-        // 未知步骤 = 没有判据。绝不能默认通过（坑 62 的恒真断言就是这么来的）。
+        // 未知步骤 = 没有判据。绝不能默认通过（见 步骤.md §二 C「复核自己也会恒真通过」）。
         return { ok: false, why: '没有为步骤「' + stepId + '」定义落库判据' };
     }
   }
@@ -972,7 +974,7 @@
    * 尺码表模板名 → 该类目下的 sizeTemplateId。
    * 接口 `getCategorySizeTemplateList` 给的是 `{sizeTemplateId, name, sizeTemplateSource}`，
    * 而保存后 `sizeCharts[].sizeTemplateId` 也是同一套 id —— 所以可以按名字对齐。
-   * 解析不到就返回 ''，判据自动降级为「只要确实有尺码表」并留一条备注。
+   * 解析不到就返回 ''；判据**不会**降级成「有尺码表就算过」，而是报「无法判定」（见 judgeSaved）。
    */
   async function resolveSizeTemplateId(templateName, ids) {
     if (!templateName) return '';
@@ -997,7 +999,7 @@
       });
       return hit;
     } catch (e) {
-      warn('尺码表模板名→id 解析失败（复核降级为「有尺码表即可」）:', e.message || e);
+      warn('尺码表模板名→id 解析失败（复核会报「无法判定」，不会放行）:', e.message || e);
       return '';
     }
   }
@@ -1148,7 +1150,8 @@
       await clickEl(opt, { wait: 2500 });
     }
     // 全选。
-    // 坑 24：「全选」按钮是**切换型**（没有 is-checked 态可判断），已全部选中时再点一次会全部取消，
+    // 见 步骤.md §二 A（交互定位）：「全选」按钮是**切换型**（没有 is-checked 态可判断），
+    // 已全部选中时再点一次会全部取消，
     // 因此必须先读分页区的「已选 N /M条」判断，已全选则跳过。
     const pagLeft = () =>
       ((document.querySelector('.pro-pagination__left')?.innerText) || '').replace(/\s+/g, ' ');
@@ -1215,7 +1218,7 @@
 
   /**
    * 读 jx-select 当前选中的文本。
-   * 坑 30：该组件的 input.value 恒为空，选中值只体现在 `.jx-select__placeholder` 里，
+   * 见 步骤.md §二 E（接口与数据）：该组件的 input.value 恒为空，选中值只体现在 `.jx-select__placeholder` 里，
    * 所以「当前值是否等于目标模板」必须读 DOM 文本，不能读 input.value
    * （原实现读 value，永远读不到，只会在控制台刷一段无害但误导的 warn）。
    */
@@ -1327,7 +1330,7 @@
     assertUnpublishedOnly('产品模板 · 应用至选中');   // 写入口第二道闸（见文件头红线 2）
     await clickEl(apply, { wait: 1500 });
     const res = await readAndCloseResultDialog();
-    // 落库复核：接口不暴露「用了哪个模板」，只见证属性是否变化（见 verifySaved ④）
+    // 落库复核：接口不暴露「用了哪个模板」，本步只标 noAssertion、不做比对（见 verifySaved ④）
     return attachVerify(
       { ...res, template: applied },
       await safeVerify('productTpl', { dlg }),
@@ -1431,7 +1434,7 @@
     assertUnpublishedOnly('SKU 模板 · 应用至选中');   // 写入口第二道闸（见文件头红线 2）
     await clickEl(apply, { wait: 1500 });
     const res = await readAndCloseResultDialog();
-    // 落库复核：同上，只见证 saleAttributes 是否变化（接口不暴露 skuPropTemplateId）
+    // 落库复核：同上，只标 noAssertion、不做比对（接口不暴露 skuPropTemplateId）
     return attachVerify(
       { ...res, template: applied },
       await safeVerify('skuTpl', { dlg }),
@@ -1470,7 +1473,7 @@
         (l) => textOf(l) === fieldName && isVisible(l)
       );
       if (sideItem) {
-        // 坑 55：实测切字段只要 ~125ms，这里不再盲等 2000ms，
+        // 见 步骤.md §二 B（虚拟滚动与分页）：实测切字段只要 ~125ms，这里不再盲等 2000ms，
         // 改成「等该字段 active + 编辑区就绪」——快则立刻过，慢则自动等（上限 20s）
         if (!panelReady(dlg)) {
           await clickEl(sideItem, { wait: 80 });
@@ -1493,7 +1496,7 @@
       await sleep(150);
       btn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
       btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      // 坑 55：hover 后不再盲等 1200ms，直接等「字段浮层里出现目标字段」
+      // 同上（§二 B）：hover 后不再盲等 1200ms，直接等「字段浮层里出现目标字段」
 
       // 在字段浮层里精确点字段（SPAN 叶子节点）
       const field = await waitFor(
@@ -1531,7 +1534,7 @@
    * 只渲染可视区那几行，且**靠 requestAnimationFrame 驱动重绘**。
    * 标签页切到后台 / 窗口最小化 / 被完全遮挡时，浏览器冻结 rAF（实测 前台 61 次/秒 → 后台 0 次/秒），
    * 于是 `scroller.scrollTop` 照常变化、代码以为在滚，但**表格一行都不重绘**，
-   * 脚本读到的永远是开头那几行 → 表现为「覆盖 7/50」或第 8 步「漏改但报成功」。
+   * 脚本读到的永远是开头那几行 → 表现为「覆盖 7/50」或第 9 步「漏改但报成功」。
    * 这不是脚本能绕过的（是浏览器省电策略），只能提前拦下来说清楚原因。
    */
   function assertPageVisible(stepName) {
@@ -1546,9 +1549,9 @@
   /**
    * 把「预览表」的分页条数设成指定值（默认 500 条/页）。
    *
-   * 坑 57（v1.13.1）：预览表的分页器是 **el- 系**（`.el-pagination__sizes .el-select`），
+   * 见 步骤.md §二 B（虚拟滚动与分页）：预览表的分页器是 **el- 系**（`.el-pagination__sizes .el-select`），
    * 与列表页那个 **jx- 系**（`.pro-pagination .jx-select`）是两套完全不同的组件树，
-   * 所以第 1 步设的「500 条/页」**不会**带进预览区 —— 必须单独设一次。
+   * 所以第 2 步设的「500 条/页」**不会**带进预览区 —— 必须单独设一次。
    *
    * 关键实测（2026-10-19）：
    *  · 点「预览」之前，这个条数下拉**就已经在 DOM 里**（默认 20 条/页），
@@ -1617,8 +1620,8 @@
   }
   /**
    * 点「预览」并等预览行真的渲染出来（条件等待，不再盲等 1500ms）。
-   * 坑 55（v1.12.0）：实测点「预览」→ 预览行出现只要 **约 53ms**，
-   * 老实现 clickEl(1500) + sleep(800) 白等 2.25s，8 个步骤累计就是十几秒的黏滞感。
+   * 见 步骤.md §二 B（虚拟滚动与分页）：实测点「预览」→ 预览行出现只要 **约 53ms**，
+   * 老实现 clickEl(1500) + sleep(800) 白等 2.25s，各步累计就是十几秒的黏滞感。
    *
    * ⚠ 判据必须是「**带 textarea 的**预览行」：实测在同一弹窗里切字段时，
    * 新字段会先渲染出一排**空骨架行**（`.jx-pro-virtual-table__row` 已在、textarea 还没有，
@@ -1647,7 +1650,7 @@
     assertUnpublishedOnly('保存修改');          // ← 最后一道闸：非「未发布」一律不落库
     const btn = [...dlg.querySelectorAll('button')].find((b) => textOf(b) === '保存修改');
     if (!btn) throw new Error('未找到「保存修改」按钮');
-    // 坑 55：点完不再盲等 2000ms 再去找结果弹窗 —— 结果弹窗本身由
+    // 同上（§二 B）：点完不再盲等 2000ms 再去找结果弹窗 —— 结果弹窗本身由
     // readAndCloseResultDialog 的 waitFor 兜着（默认 20s），这里只留点击节流
     await clickEl(btn, { wait: 120 });
     return await readAndCloseResultDialog();
@@ -1674,7 +1677,7 @@
     const dlg = await openBatchEdit('标题');
     await ensureRuleMode(dlg);
 
-    // 坑 57（v1.13.1）：预览表自带「每页条数」下拉（el- 系，与列表页 jx- 系无关），
+    // 见 步骤.md §二 B（虚拟滚动与分页）：预览表自带「每页条数」下拉（el- 系，与列表页 jx- 系无关），
     // 默认 20 条/页。若不拉满，选中 >20 条时预览就会分页，而下面的滚动只扫当前页 →
     // 覆盖断言虽能拦住（不会写坏），但这一步等于跑不完。先把条数设成 500 再预览。
     const sizeSet = await setPreviewPageSize(dlg, '500条/页');
@@ -1694,7 +1697,7 @@
     if (!words.length) warn('删除词表为空，本步只加前缀，不删任何词');
 
     /*
-     * 坑 52（v1.12.0）：预览表是 **虚拟滚动**（`.jx-pro-virtual-table__body` 是 DynamicScroller，
+     * 见 步骤.md §二 B（虚拟滚动与分页）：预览表是 **虚拟滚动**（`.jx-pro-virtual-table__body` 是 DynamicScroller，
      * maxHeight 400px），一次只渲染可视区 + 缓冲那几行。老实现用一次
      * `dlg.querySelectorAll('.jx-pro-virtual-table__row')` 快照，只改到「当前渲染出来的行」：
      * 实测 30 条商品时只有 **7 行**在 DOM 里，于是 23 条原封不动，
@@ -1707,7 +1710,7 @@
       dlg.querySelector('.jx-pro-virtual-table .vue-recycle-scroller') ||
       dlg.querySelector('.jx-pro-virtual-table__body');
 
-    /* ---------------- 覆盖追踪（坑 56：不许再出现「保存 20/20，实际只改 19 条」） ---------------- */
+    /* ---------------- 覆盖追踪（§二 C：不许再出现「保存 20/20，实际只改 19 条」） ---------------- */
 
     /**
      * 「应改总数」：预览区分页区的 `已选 N / M条` 里的 M，就是本次预览的行数。
@@ -1722,7 +1725,7 @@
     const expected = readExpectedCount();
 
     /*
-     * 坑 57：预览区条数已拉到 500 上限，但**选中超过 500 条时仍会分页**。
+     * 见 步骤.md §二 B（虚拟滚动与分页）：预览区条数已拉到 500 上限，但**选中超过 500 条时仍会分页**。
      * 这一步只滚当前页，跨页的行永远渲染不到 → 必须在动手前就把它识别出来，
      * 否则会走到最后才被 "只覆盖到 X/Y 行（虚拟滚动没扫全）" 拦下，报错原因还指向歧路。
      */
@@ -1774,7 +1777,7 @@
       const cells = [...row.querySelectorAll('.jx-pro-virtual-table__row-cell')];
       const ta = row.querySelector('textarea');
       if (!ta || cells.length < 3) return null;
-      // 坑 53：基准列必须是 cells[2]（`.old-title` 的「编辑前」列），
+      // 见 步骤.md §二 C（断言与复核）：基准列必须是 cells[2]（`.old-title` 的「编辑前」列），
       // 不能用 cells[1]（整块商品信息，item-info 有内容时会污染标题）
       return {
         ta,
@@ -1892,7 +1895,7 @@
     }
 
     /*
-     * 坑 56（v1.12.1）：**覆盖断言** —— 别再把「本趟没有可写的行」当成「全都改完了」。
+     * 见 步骤.md §二 C（断言与复核）：**覆盖断言** —— 别再把「本趟没有可写的行」当成「全都改完了」。
      * 2026-10-19 实测踩到过：勾 20 条跑完面板显示「成功 20/20」，
      * 但接口复核发现其中 1 条标题根本没改（带着原文参加了保存）。
      * 原因就是收敛判据只看「有没有可写行」，分辨不出「这一行还没渲染出来 / 编辑前是空的」。
@@ -1953,8 +1956,8 @@
    * 实测（2026-10-18）：模板下拉带固定类名 `.size-template-select`，
    * 比原来「取最后一个 placeholder=请选择 的输入框」稳得多
    * （那个写法依赖「弹窗里只有分页 + 模板两个 select」这个偶然事实）。
-   * 坑 30：该下拉的选中值同样不在 input.value，必须读 `.jx-select__placeholder`。
-   * 坑 31：下拉里可能只有「暂未创建模板，请创建模板后再引用」这类提示 li，不能当成模板名。
+   * 见 步骤.md §二 E（接口与数据）：该下拉的选中值同样不在 input.value，必须读 `.jx-select__placeholder`。
+   * 见 步骤.md §二 A（交互定位）：下拉里可能只有「暂未创建模板，请创建模板后再引用」这类提示 li，不能当成模板名。
    */
   async function stepSizeChart() {
     const dlg = await openBatchEdit('尺码表');
@@ -1963,7 +1966,7 @@
       dlg.querySelector('.el-select.jx-pro-select');
     if (!selectEl) throw new Error('未找到尺码表模板选择框');
 
-    // 预设开关打开时用设置里选的尺码表模板（空＝跟随下拉第一个选项），关＝沿用 CFG
+    // 设置里选中的尺码表模板直接生效（空＝跟随下拉第一个选项；没有开关，也不回落 CFG）
     const current = readSelectText(selectEl);
     const inp = selectEl.querySelector('input');
     await clickEl(inp || selectEl, { wait: 900 });
@@ -2013,7 +2016,7 @@
 
   /**
    * 找一个「子弹窗」：排除批量编辑主弹窗。
-   * 坑 32：原实现用 dialogByText('试穿尺码') 找模特信息子弹窗，但主弹窗的
+   * 见 步骤.md §二 A（交互定位）：原实现用 dialogByText('试穿尺码') 找模特信息子弹窗，但主弹窗的
    * 预览区「编辑前」列本身就含有「试穿尺码：M」（产品已设置过模特时），
    * dialogByText 按可见弹窗顺序返回**第一个**匹配 → 命中主弹窗 →
    * 在主弹窗里找不到 M/合适 radio，直接抛「未找到试穿尺码/感受选项」。
@@ -2027,7 +2030,7 @@
 
   /**
    * 读「模特信息」编辑表里成衣模特列当前显示的文本。
-   * 坑 33：原实现用 dlg.innerText 判断「已应用」，但这个文本除了编辑表单，
+   * 见 步骤.md §二 A（交互定位）：原实现用 dlg.innerText 判断「已应用」，但这个文本除了编辑表单，
    * 还包含预览区「编辑前」列（历史状态）。商品早就设置过 Jack 时，
    * 即使本次表单是空的也会判成「已应用」而整步跳过，新选中且没设置的商品就被漏处理。
    * 正确依据是 `.goods-model-table` 的成衣模特单元格：未设置时它是「添加模特」按钮文本。
@@ -2120,7 +2123,7 @@
 
   /**
    * 顶部「选择 ▾ → 选中全部」。
-   * 坑 23：菜单 <ul> 被 teleport 到 body 末尾、position:fixed，offsetParent 为 null，
+   * 见 步骤.md §二 E（接口与数据）：菜单 <ul> 被 teleport 到 body 末尾、position:fixed，offsetParent 为 null，
    * 必须用 isVisible 判断；且该菜单由 **click** 展开（hover 不展开）。
    */
   async function selectAllSkus(scope) {
@@ -2167,7 +2170,7 @@
   /**
    * 颜色图面板里的颜色名输入框。
    * 注意：① 列表是虚拟滚动，只会渲染当前可见的几行；② placeholder 是「该规格当前色名」，
-   * 也可能是空串（坑 25）—— 所以**不能**要求 placeholder 非空，只排除已知的其它输入框。
+   * 也可能是空串（见 步骤.md §四 元素定位速查表的「颜色名输入框」）—— 所以**不能**要求 placeholder 非空，只排除已知的其它输入框。
    */
   function colorNameInputs(dlg) {
     return [...dlg.querySelectorAll('.pro-divider input.el-input__inner')]
@@ -2176,7 +2179,7 @@
   /**
    * 颜色图面板分页区的「N条」。
    *
-   * ⚠ **语义是「勾选商品数」，不是「规格行数」**（坑 62 实测）：
+   * ⚠ **语义是「勾选商品数」，不是「规格行数」**（见 步骤.md §二 C「那个覆盖数 warn 本身也没意义」）：
    * 勾 6 个商品 → 这里显示 `6条`；而列表里每一行是**一个规格**（颜色名输入框按规格排），
    * 当前可视区渲染 4 行、全表可能有十几行。两个数维度不同，**不能相互比较**。
    *
@@ -2187,7 +2190,7 @@
     const ed = dlg.querySelector('.sku-image-batch-editor') || dlg;
     const totalEl = ed.querySelector('.sku-image-batch-editor__item-list .el-pagination__total') ||
       ed.querySelector('.el-pagination__total');
-    // 坑 62（v1.14.0）：这里原本是 `/(\\d+)\\s*条/` —— 正则**字面量**里的 `\\d` 表示
+    // 见 步骤.md §二 C（断言与复核）：这里原本是 `/(\\d+)\\s*条/` —— 正则**字面量**里的 `\\d` 表示
     // 「一个反斜杠 + 字母 d」，永远匹配不到数字，函数恒走 fallback（返回已渲染 view 数，实测 4）。
     // 这直接导致依赖它的那条覆盖数 warn 恒不成立、且错误弹窗里印出误导数字（「共 4 条，实际扫到 37 行」）。
     // 正则字面量里只能用单反斜杠。注意：`new RegExp('...\\d...')` 那种**字符串**写法里双反斜杠才是对的。
@@ -2198,14 +2201,14 @@
   /**
    * 颜色名统一改成「混合色」。
    *
-   * 坑 46（v1.9.3，用户实测「没把所有商品改成混合色」）：
+   * 见 步骤.md §二 B（虚拟滚动与分页）—— 用户实测「没把所有商品改成混合色」：
    * 颜色图列表是 **虚拟滚动**（`RecycleScroller`）：只有落进可视区的那几行会真正渲染，
    * 其余行要么还没 DOM、要么被挪到 `translateY(-9999px)`。旧实现 `dlg.querySelectorAll(...)`
    * 只对「调用瞬间已渲染的那几行」动手，所以 6 个商品里往往只改到前 2–3 个就收工
    * （历史日志 `颜色已改为「混合色」: 2 / 4` 同一成因，当时误判成 placeholder 问题）。
-   * v1.9.3 的对策：**按可视区扫一遍 + 边扫边滚**，6–20 条已实测可全覆盖。
+   * 对策：**按可视区扫一遍 + 边扫边滚**，6–20 条已实测可全覆盖。
    *
-   * 坑 54（v1.12.0，严格审查发现）：**光滚还不够** —— 这个面板 **有分页**，
+   * 同一主题的后半段（严格审查发现）：**光滚还不够** —— 这个面板 **有分页**，
    * 默认 `pageSize = 20`。实测 25 个商品时 `displayDetailList` 有 25 条，
    * 但列表 `scrollHeight` 只覆盖当前页 20 条 → 第 21 条起**根本滚不到、永远不渲染**，
    * 而且「复核」也只看当前页，于是 `stillWrong = 0` → 不 warn → 面板报成功。
@@ -2213,7 +2216,7 @@
    * 对策：**先翻遍所有分页，每页各扫一遍**；复核同样按「遍历所有页」的口径统计。
    */
   async function setAllColors(dlg, colorName) {
-    // 坑 57（v1.13.1）：颜色图面板同样是 **el- 系分页器**，默认 20 条/页。
+    // 同上（§二 B）：颜色图面板同样是 **el- 系分页器**，默认 20 条/页。
     // 先把条数拉满（500），让「逐页遍历」退化成单页直通；
     // 超过 500 条时仍会分页，下面的逐页逻辑继续兜底。
     /* 颜色图列表容器（也是唯一的滚动容器） */
@@ -2239,7 +2242,7 @@
 
     if (!colorNameInputs(dlg).length) throw new Error('未找到颜色名输入框');
 
-    /* ---------- 分页翻页（坑 54） ---------- */
+    /* ---------- 分页翻页（§二 B） ---------- */
 
     /** 该面板的分页器（页面用 jx-pro-pagination 包 el-pagination） */
     const pager = () =>
@@ -2334,7 +2337,7 @@
 
     /* ---------- 复核：遍历所有页，按「商品行」统计，而不是按「输入框」 ---------- */
     /*
-     * 坑 58（v1.13.1）：老实现把待复核项收集成 **输入框 DOM 节点**（Set<input>）。
+     * 见 步骤.md §二 B（虚拟滚动与分页）：老实现把待复核项收集成 **输入框 DOM 节点**（Set<input>）。
      * 但虚拟滚动会复用节点 —— 同一个 <input> 元素先后承载不同商品行，
      * 于是 wrongNodes.size 既可能少算（后一行改对了就把前一行的那条覆盖掉），
      * 也可能多算（同一行在不同滚动位置重复计入）—— 它压根不代表"有几个商品没改对"。
@@ -2369,7 +2372,7 @@
     /*
      * 复核要多趟扫：实测单趟从顶滚到底会漏掉个别行（滚动过快时虚拟滚动来不及摆好某些行，
      * 50 行只认到 42 行）。所以「重复扫，直到这次没有新增覆盖行」最多 4 趟 ——
-     * 这与第 5 步 sweepRows 的收敛思路一致，比「扫一趟就断言」稳。
+     * 这与第 6 步 sweepRows 的收敛思路一致，比「扫一趟就断言」稳。
      */
     for (let pg = 1; pg <= pages; pg++) {
       if (!(await goPage(pg))) continue;
@@ -2396,7 +2399,7 @@
     if (scroller) { scroller.scrollTop = 0; await sleep(200); }
 
     return {
-      // 坑 62：命名上就把语义钉死 —— 这是**勾选商品数**，不是规格行数。
+      // 同理（§二 C）：命名上就把语义钉死 —— 这是**勾选商品数**，不是规格行数。
       // 老名字 `total` 太含糊，下一个人一定会再拿它去跟 coveredRows 比。
       selectedItemCount: colorRowTotal(dlg),
       changed,
@@ -2417,7 +2420,7 @@
     );
 
     /*
-     * 坑 57：先把颜色图列表的每页条数拉满（默认 20 条/页 → 500），
+     * 见 步骤.md §二 B（虚拟滚动与分页）：先把颜色图列表的每页条数拉满（默认 20 条/页 → 500），
      * 再执行「选中全部」。这样即使「选中全部」是按当前渲染/当前页生效的，
      * 也不会只选到第一页那 20 条。（setAllColors 里还会再设一次，已是目标值时直接跳过。）
      */
@@ -2425,17 +2428,17 @@
     if (earlySize) log('颜色图每页条数:', earlySize);
     await sleep(500);
 
-    // 8.1 范围必须是「全部规格」，否则只会改到当前勾选的规格
+    // 9.1 范围必须是「全部规格」，否则只会改到当前勾选的规格
     const range = await selectAllSkus(editor);
     log('选择范围:', range);
 
-    // 8.2 逐张插入
+    // 9.2 逐张插入
     for (const img of CFG.colorImages) {
       await insertOneImage(dlg, img.pos, img.url);
       await sleep(1200);
     }
 
-    // 8.3 颜色名 → 混合色（坑 46 虚拟滚动 + 坑 54 分页 + 坑 57 条数拉满）
+    // 9.3 颜色名 → 混合色（§二 B：虚拟滚动 + 分页 + 条数拉满）
     const res = await setAllColors(dlg, CFG.colorName);
     log(
       '颜色已改为「' + CFG.colorName + '」:',
@@ -2443,10 +2446,10 @@
       res.pages, '页 · 扫描', res.passes, '趟 · 覆盖规格行', res.coveredRows
     );
     /*
-     * 坑 58（v1.13.1）：这里以前只 warn 就照样「保存修改」，等于把「改了一半」当成功落库。
-     * 现在 **有行没改对就中止**（与第 5 步同一条取舍）：宁可显式失败、重跑一次。
+     * 见 步骤.md §二 C（断言与复核）：这里以前只 warn 就照样「保存修改」，等于把「改了一半」当成功落库。
+     * 现在 **有行没改对就中止**（与第 6 步同一条取舍）：宁可显式失败、重跑一次。
      *
-     * 坑 62（v1.14.0）：**删掉了「覆盖数 < 总数」那条 warn**。原因是两个数维度不同、不可比：
+     * 见 步骤.md §二 C「那个覆盖数 warn 本身也没意义」：**删掉了「覆盖数 < 总数」那条 warn**，两个数维度不同、不可比：
      *   分页区 `N条` = **勾选商品数**（实测勾 6 个 → `6条`）
      *   coveredRows = **规格行数**（每个商品可能有多个颜色规格；实测同一时刻可视区 4 行、
      *                 全表十几行）
@@ -2464,7 +2467,7 @@
       );
     }
 
-    // 8.4 保存
+    // 9.4 保存
     // 落库复核：saleAttributes[颜色].values[].name 必须全是「混合色」
     return attachVerify(
       await clickSave(dlg),
@@ -2625,7 +2628,7 @@
     { id: 'colorImages', name: '颜色图', hint: '第 3/4/5 张 + 混合色', fn: stepColorImages }
   ];
 
-  /** 跨面板重建保留的 UI 状态（SPA 路由切换会重建面板） */
+  /** 跨面板重建保留的运行期 UI 状态（位置 / 折叠 / 视图另由 localStorage 持久化） */
   const uiState = {
     running: false,
     view: 'settings',        // 默认显示设置页；'run'＝执行页（步骤 + 一键编辑）
@@ -2713,7 +2716,7 @@
    *
    * 需求：**开始执行时在按钮内计时显示花费的秒数**。
    * 实现：`uiState.startedAt` 是权威起点，`tickTimer` 每 250ms 只改按钮里的
-   * `.main-btn-time` 文本节点 —— 不去调 `render()`（那会重排 9 个步骤行，白费）。
+   * `.main-btn-time` 文本节点 —— 不去调 `render()`（那会重排 10 个步骤行，白费）。
    * 停止/结束/异常时都要 `stopTimer()`，否则重建面板后旧 interval 会继续改已脱离文档的节点。
    */
   let tickTimer = 0;
@@ -2748,7 +2751,7 @@
     return uiState.steps.get(id);
   }
 
-  /* 拖拽状态：监听只挂一次（坑 45 附带修正），指向"当前这块面板" */
+  /* 拖拽状态：监听只挂一次（见 步骤.md §二 D 面板生命周期），指向"当前这块面板" */
   let drag = null;
   let dragRef = null;
   let dragBound = false;
@@ -2758,15 +2761,14 @@
 
   const CSS = `
     /* ============================================================================
-       v1.11.0 视觉系统（Apple HIG 取向）—— 纯中性底 + 系统蓝强调
+       视觉系统（Apple HIG 取向）—— 纯中性底 + 系统蓝强调
        · **面板主体回到中性白/灰阶**：设置抽屉、词标签、徽标一律不再铺彩色底
-         （v1.10.0 把青色铺满整片，观感就是"全绿一片"）
        · 彩色只出现在**点级**：悬停/选中的蓝块、主按钮、状态色
        · 强调色＝iOS 系统蓝 #0A84FF（深色文字用 #0B6BCB 保证对比度）
        · 圆角五级 16 / 12 / 10 / 8 / 6；投影三级 --sh-1..3；曲线一条 --ease
-       · 主按钮＝实色蓝渐变 + 白字（旧版两层半透明叠加，对比度被拉低 → 发糊）
-       · 补齐 .panel.is-collapsed：旧版 JS 一直在 toggle 这个类，但 CSS 里根本没有它，
-         所以点「−」只有符号变了、面板收不起来（v1.10.0 修复的真实 bug）
+       · 主按钮＝浅蓝底 + 蓝字（运行中＝浅红底 + 深红字），无边框、不发光
+       · .panel.is-collapsed 必须有对应规则：JS 一直在 toggle 这个类，
+         没有规则时点「−」只有符号变、面板收不起来
        ============================================================================ */
     :host { all: initial; }
     :host, .panel {
@@ -2828,7 +2830,7 @@
       from { opacity: 0; transform: translateY(-6px) scale(0.985); }
       to { opacity: 1; transform: none; }
     }
-    /* 坑 45：SPA 切路由 / 面板被页面冲掉后自愈时会重建面板，若每次都播 msxb-in，
+    /* 见 步骤.md §二 D（面板生命周期）：面板被页面冲掉后自愈重建时，若每次都播 msxb-in，
        用户看到的就是"切页闪一下"。首次挂载才播入场动画；重建走 .no-anim 直接出成品。 */
     .panel.no-anim { animation: none; }
 
@@ -3772,12 +3774,12 @@
         return;
       }
       // 步与步之间的间隙也可能收到停止请求：这里吞掉 StopError，交给循环开头统一收尾。
-      // 坑 55：这 250ms 只是让面板有机会重绘，8 步白等 2s；缩到 80ms（停止检测靠
-      // 循环开头的 stopRequested，不依赖这个间隔，所以缩短不影响「停止编辑」）
+      // 见 步骤.md §二 B（虚拟滚动与分页）：这个间隔只是让面板有机会重绘；
+      // 缩到 80ms，停止检测靠循环开头的 stopRequested，不依赖它
       await sleep(80).catch(() => {});
     }
 
-    // 只有「真的提前跳出循环」才算被停止：全部步骤跑完后，收尾的 sleep(250) 里
+    // 只有「真的提前跳出循环」才算被停止：最后一步跑完后的 80ms 等待里
     // 也可能收到停止请求，那不该把一次完整成功报成「已停止」。
     uiState.running = false;
     uiState.currentStep = null;
@@ -3799,7 +3801,7 @@
    * 原生 <select> 的弹出列表由操作系统绘制，字体/圆角/高亮/毛玻璃全都无法用 CSS 控制，
    * 在面板里怎么看都像「别人的控件」。这里整套换成自绘下拉：
    *   触发器 = 圆角白底 + 值文本 + chevron（展开时旋转 180° 并变蓝）
-   *   浮层   = 毛玻璃圆角菜单，选中项蓝字 + 勾，悬停浅灰，键盘 ↑/↓ 可选
+   *   浮层   = 毛玻璃圆角菜单，选中项蓝字 + 勾，悬停浅蓝，键盘 ↑/↓ 可选
    * 浮层挂进 shadow 的 .menu-layer（position: fixed），因此不受 .panel overflow: hidden 影响。
    */
   const CHEVRON_SVG = '<svg viewBox="0 0 10 6" aria-hidden="true">' +
@@ -3812,7 +3814,7 @@
   /** 当前展开的菜单（同一时刻只允许一个） */
   let openMenu = null;
 
-  /** 收起当前展开的下拉浮层（换页重建 / 关设置 / 折叠 / 开跑前都要调） */
+  /** 收起当前展开的下拉浮层（面板重建 / 关设置 / 折叠 / 开跑前都要调） */
   function closeSelectMenu() {
     if (openMenu) openMenu.close();
   }
@@ -4054,7 +4056,7 @@
    * 重绘三个模板下拉（选项来自 settings.tplOptions）。
    * 注意「显示 = 执行」：若用户之前选中的名字已经不在候选里（妙手后台改名 / 商品类目变了，
    * 换类目就会换尺码表候选），这里**顺手把选中值落到候选首项并落盘**，
-   * 否则会出现「面板显示 A、第 2/3/6 步却按 B 去找 → 报『没有该模板』」的错位。
+   * 否则会出现「面板显示 A、第 3/4/7 步却按 B 去找 → 报『没有该模板』」的错位。
    */
   function renderSettingsOptions() {
     if (!refs.settings || !refs.tplSelects) return;
@@ -4084,8 +4086,8 @@
       // 只能在采集箱列表页读（选中集只存在于页面内存里，别处拿不到）
       const prereq = '｜尺码表模板需在采集箱列表页且已勾选商品（它按所选商品的类目取）';
       refs.setReadTpl.title = (missing.length
-        ? '自动打开页面下拉读取完整选项（只读，不应用、不保存）：' + missing.join('、')
-        : '重新读取三处模板下拉的完整选项（只读，不应用、不保存）') + prereq;
+        ? '自动读取完整选项（优先直连接口，失败才开页面下拉；只读，不应用、不保存）：' + missing.join('、')
+        : '重新读取三处模板的完整选项（优先直连接口，失败才开弹窗；只读，不应用、不保存）') + prereq;
       refs.setReadTpl.classList.toggle('is-hint', !!missing.length);
     }
   }
@@ -4097,7 +4099,7 @@
     box.textContent = '';
     const words = settings.deleteWords;
     if (!words.length) {
-      box.appendChild(el('div', 'word-empty', '词库为空：第 5 步只加前缀，不删任何词'));
+      box.appendChild(el('div', 'word-empty', '词库为空：第 6 步只加前缀，不删任何词'));
     } else {
       words.forEach((w) => {
         const c = el('span', 'word-chip', w);
@@ -4265,7 +4267,7 @@
   }
 
   /**
-   * 直连读「产品模板 / SKU 模板」候选（两者共用同一份清单）。
+   * 直连读「产品模板 / SKU 模板」候选（**两条独立链路**，不共用清单）。
    * GET item_template/getSiteTemplateMap?sites[]=PDDKJ → siteAndItemTemplateMap.PDDKJ[{ itemTemplateId, name, cid }]
    */
   const API_ITEM = '/api/platform/pddkj/item';
@@ -4297,7 +4299,7 @@
   /**
    * 直连读 **SKU 模板**候选。
    *
-   * 坑 58（v1.14.0）：产品模板与 SKU 模板**不是同一份清单**，老实现让两者共用
+   * 见 步骤.md §二 E（接口与数据）：产品模板与 SKU 模板**不是同一份清单**，老实现让两者共用
    * `getSiteTemplateMap`，属于「看起来对」的巧合 —— 本账号两份恰好同名同序，
    * 一旦只在一边新建/改名，面板下拉就会显示出一份该弹窗里根本不存在的名字。
    * 实测（2026-10-19，DOM + 网络双证据）：打开「批量引用SKU模板」弹窗时页面发的是
@@ -4319,7 +4321,6 @@
     return names;
   }
 
-  /** 读取三处模板候选（产品/SKU、尺码表都优先直连；直连不成立才回落开弹窗。全程只读：不应用、不保存） */
   /**
    * 不在采集箱列表页时自动跳过去（复用第 0 步的 SPA 导航），并等列表渲染出来。
    * 返回是否确实到了采集箱页。
@@ -4355,6 +4356,7 @@
     return selectedDetailIds().length > 0;
   }
 
+  /** 读取三处模板候选（产品/SKU、尺码表都优先直连；直连不成立才回落开弹窗。全程只读：不应用、不保存） */
   async function readAllTemplates() {
     if (uiState.running) {
       toast(false, '执行中', '等当前步骤跑完再改设置');
@@ -4365,7 +4367,7 @@
     if (btn) { btn.disabled = true; btn.textContent = '读取中…'; }
     const report = [];
     try {
-      // 产品模板 / SKU 模板是**两条独立接口**（坑 58：不再共用 getSiteTemplateMap），
+      // 产品模板 / SKU 模板是**两条独立接口**（不再共用 getSiteTemplateMap，见 §二 E），
       // 各自直连、各自回落开弹窗；一个失败不影响另一个。
       const jobs = [
         { kind: 'product', menu: '产品模板', title: '批量引用模板', label: '产品模板', api: itemTemplateNames },
@@ -4526,8 +4528,8 @@
   }
 
   /**
-   * 视图：'settings'＝设置页（默认显示），'run'＝执行页（步骤 + 一键编辑）。
-   * 面板重建（SPA 切路由）时 uiState 在闭包里，视图选择会保留；刷新页面则回到默认的设置页。
+   * 视图：'settings'＝设置页（首次默认），'run'＝执行页（步骤 + 一键编辑）。
+   * 视图来自持久化：刷新后仍是上次那一页（localStorage['msxb-ui-v1'] 的 view 字段）。
    */
   function applyView() {
     const showSettings = uiState.view === 'settings';
@@ -4569,7 +4571,8 @@
 
   /**
    * 建面板。
-   * 坑 45：SPA 切页时**不再拆掉重建**（见下方看护循环），但「面板被页面冲掉」仍需自愈重建。
+   * 见 步骤.md §二 D（面板生命周期）：SPA 切页时**不拆掉重建**（见下方看护循环）；
+   * 「面板被页面冲掉」仍需自愈重建。
    * 重建时必须跳过入场动画（.no-anim），否则用户眼里就是"一切页闪一下"。
    * 同理，用户拖过的位置要保留 —— 重建后面板不该跳回右上角默认位。
    */
@@ -4712,10 +4715,10 @@
     });
 
     /* 拖拽（用面板自身定位，避免 left/top 与 right 混用）。
-       坑 45 附带修正：早先 mousemove/mouseup 每轮 buildPanel 都往 document 上新增一份且从不移除，
-       面板重建 N 次就累积 N 个监听 —— 现在整组监听只挂一次，用 dragRef 指向当前面板。
-       坑 59（v1.14.0）：位置要**跨刷新保持** —— mousemove 只更新内存 dragPos（每帧写
-       localStorage 是同步 IO，会拖慢拖动），真正落盘放在 mouseup。 */
+       见 步骤.md §二 D（面板生命周期）：早先 mousemove/mouseup 每轮 buildPanel 都往 document 上
+       新增一份且从不移除，面板重建 N 次就累积 N 个监听 —— 现在整组监听只挂一次，用 dragRef
+       指向当前面板。位置要**跨刷新保持** —— mousemove 只更新内存 dragPos（每帧写 localStorage
+       是同步 IO，会拖慢拖动），真正落盘放在 mouseup。 */
     dragRef = { panel };
     if (!dragBound) {
       dragBound = true;
@@ -4766,7 +4769,7 @@
     }
 
     document.body.appendChild(host);
-    // 挂进 DOM 之后才算「已挂载」：首次出现仍播入场动画，之后的任何重建都直接出成品（坑 45）
+    // 挂进 DOM 之后才算「已挂载」：首次出现仍播入场动画，之后的任何重建都直接出成品（§二 D）
     uiState.mounted = true;
     render();
     syncSettingsUI();
@@ -4777,7 +4780,7 @@
   /**
    * 全局挂载：任何妙手页面都建面板，第 0 步负责导航过去。
    *
-   * 坑 37：Tampermonkey 里若同时留着旧版（例如 1.5.1）和当前版，
+   * 见 步骤.md §二 D（面板生命周期）：Tampermonkey 里若同时留着旧版和当前版，
    * 旧版先跑、先建出 #msxb-panel，本版 boot() 见到「面板已存在」就直接 return，
    * 结果用户看到的永远是旧界面 —— 表现为「更新了却没区别」。
    * 对策：给面板打上版本号，发现现存面板不是本版建的，**顶掉重建**。
@@ -4809,31 +4812,27 @@
     boot();
   }
 
-  /* 版本检测：每次刷新页面跑一次（6 小时缓存，命中缓存时零延迟、不发请求）。
+  /* 版本检测：每次刷新都跑一次，并用缓存把上次结论先画出来（首帧零延迟）。
      放在 boot 之后 —— 先出面板，再让标记异步显形，绝不让网络拖慢首屏。
-     失败只 warn，不弹 toast、不影响任何业务流程。 */
+     只有「上次失败且不足 60s」时跳过本轮；失败只 warn，不弹 toast、不影响业务流程。 */
   checkUpdate(false);
 
   /**
-   * 看护循环：处理「面板节点被页面重渲染冲掉」与「版本不符」。
+   * 看护循环：处理「面板节点被页面重渲染冲掉」与「版本不符」，只做两件事：
    *
-   * 坑 36：v1.5.0 只在 location.pathname 变化时重建面板。但妙手很多操作会让
-   * 页面自身重渲染/清空 body 尾部节点（采集箱跳转、批量操作后刷新列表等），
-   * 面板被一起冲掉且路径不变 → 看护循环判定「无需处理」→ 面板永久消失。
-   * v1.5.1 起改为：每轮先看面板是否还在，不在就重建（这就是「自愈」）。
+   *   ① **自愈**：妙手很多操作会让页面自身重渲染 / 清空 body 尾部节点（采集箱跳转、
+   *      批量操作后刷新列表等），面板被一起冲掉、路径却不变 —— 所以每轮先看面板是否
+   *      还在文档里，不在就重建，不能只靠监听路由。
+   *   ② **接管旧版**：面板在、但 dataset.msxbVersion 不是本版（Tampermonkey 里还装着
+   *      旧版，旧版先建了面板），顶掉重建，否则新版界面永远不生效。
    *
-   * 坑 45（v1.9.3）：**不再因为路由变化就拆掉重建**。
-   * 面板是 position:fixed 挂在 body 上，SPA 切路由并不会销毁它 —— 早先「路由变 → remove → buildPanel」
-   * 是自找的：拆掉 + 重建 = 0.28s 入场动画重播（opacity 0→1 + 上移），用户看到的就是「一切页闪一下」，
-   * 而且重建期间有若干帧面板是空的（设置页/执行页 DOM 全部重新生成），视觉上更像抖动。
-   * 现在只在「面板真的不在文档里」或「版本不符」时重建；路由变化仅用于记账。
-   *
-   * 坑 37 补充：面板在、但版本号不是本版（Tampermonkey 里还装着旧版，旧版先建了面板），
-   * 也要顶掉重建，否则新版界面永远不生效。
+   * 路由变化本身**不需要**处理：面板是 position:fixed 挂在 body 上，SPA 切路由不会销毁它。
+   * 反过来「路由变 → remove → buildPanel」是自找的：拆掉 + 重建 = 0.28s 入场动画重播，
+   * 中间还有若干帧面板是空的，用户看到的就是「切页闪一下」（见 步骤.md §二 D）。
    */
   setInterval(() => {
     // 注意：路由变化**不需要**任何处理 —— 面板是 position: fixed 挂在 body 上的，
-    // SPA 切路由不会销毁它（v1.9.2 及更早会因此拆掉重建，表现为「切页闪一下」，见坑 45）
+    // SPA 切路由不会销毁它（拆掉重建只会让「切页闪一下」，见 步骤.md §二 D）
 
     const host = document.getElementById('msxb-panel');   // 只认"在文档里"的面板
     if (host && host.dataset.msxbVersion === SCRIPT_VERSION) return;   // 面板在、版本对 → 什么都不做
