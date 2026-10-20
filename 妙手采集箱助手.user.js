@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.17.3
+// @version      1.17.4
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.17.3';
+  const SCRIPT_VERSION = '1.17.4';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -96,7 +96,7 @@
    */
   const settings = {
     // 过滤词词库（**执行时唯一的来源**）：改它只有一条路 —— commitWords()
-    // （弹窗里「保存为新版本」/ 恢复历史）；历史版本另存在 localStorage['msxb-words-v1']
+    // （弹窗里「保存为新版本」是唯一入口）；历史版本另存在 localStorage['msxb-words-v1']
     deleteWords: [...CFG.deleteWords],
     // 三类模板的目标值＝面板下拉里选中的模板名；空串＝跟随页面下拉的第一个选项。
     // v1.8.0 起没有「模板预设」开关：设置里是什么就用什么（选中即保存，无防抖）
@@ -3857,9 +3857,6 @@
     .wm-delta .is-add { color: #1E8E3E; }
     .wm-delta .is-del { color: #D70015; }
     .wm-delta .is-order { color: var(--ink-3); }
-    /* v1.17.2：行内操作按钮（恢复 / 导出）已去掉，这组「悬停才显形」的空位规则随之作废。
-       .wm-mini 现在只活在工具条里，隐藏统一用 is-hidden。 */
-    .wm-mini.is-hidden { display: none; }
     .wm-mini {
       border: none;
       padding: 2px 6px;
@@ -3871,8 +3868,6 @@
       transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
     }
     .wm-mini:hover { background: rgba(120, 120, 128, 0.18); color: var(--ink); }
-    .wm-mini.is-danger { background: rgba(255, 59, 48, 0.14); color: #D70015; }
-    .wm-mini.is-danger:hover { background: rgba(255, 59, 48, 0.24); }
 
     /* 顶部：分段控件 + 搜索 */
     .wm-top { display: flex; align-items: center; gap: 8px; padding: 2px 0 8px; }
@@ -4753,7 +4748,7 @@
   }
 
   /**
-   * 追加一版（前插）。id 用单调递增的 seq，**裁剪后不回收** —— 这样「恢复自 #8」永远指得准。
+   * 追加一版（前插）。id 用单调递增的 seq，**裁剪后不回收**，备注里的编号永远指得准。
    * 空词库绝不入历史（防止把"清空词库"伪装成一版）。
    */
   function pushWordVersion(words, reason, note) {
@@ -4813,7 +4808,7 @@
   }
 
   /**
-   * 写入词库的**唯一入口**（弹窗编辑 / 恢复 / 导入都走这里）：
+   * 写入词库的**唯一入口**（弹窗「保存为新版本」、导入、对账补记都走这里）：
    *   ① 解析 + 去重；② 空库拒绝（清空输入框 ≠ 清空词库）；③ 与现值相同不写（不产生空版本）；
    *   ④ **先**落 settings（权威，执行时读它），**再**追加历史版本。
    * 返回是否真的改变了生效词库。
@@ -4859,8 +4854,6 @@
     query: '',            // 搜索框（只服务「词库」页）
     draft: '',            // 更新页草稿（关弹窗不丢，刷新才丢）
     dirty: false,         // 草稿是否已被改过（切页/重开不清空，避免手滑丢工作）
-    confirmId: 0,         // 正在二次确认「恢复」的版本 id
-    confirmTimer: 0,
     returnFocus: null     // 关闭后把焦点还给打开它的按钮
   };
 
@@ -5077,28 +5070,14 @@
     const wordsBar = el('div', 'wm-bar');
     const wordsInfo = el('div', 'wm-info', '');
     const wordsActs = el('div', 'wm-acts');
-    /* 「恢复为当前」只在看历史版时出现（v1.17.2：从版本行挪到这里，行内不再挂按钮） */
-    const btnRestore = el('button', 'wm-mini is-hidden', '恢复为当前');
-    const btnCancelRestore = el('button', 'wm-mini is-hidden', '取消');
     const btnCopy = el('button', 'wm-mini', '复制');
     const btnTxt = el('button', 'wm-mini', '导出 TXT');
-    [btnRestore, btnCancelRestore, btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
+    [btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
     btnCopy.title = '复制当前这一版的词（逗号分隔，可直接粘到别处）';
     btnTxt.title = '把当前这一版导出为 TXT：逗号分隔、不带 BOM，可原样粘回「更新」页';
-    btnRestore.addEventListener('click', () => {
-      const v = viewedWordVersion();
-      if (!v) return;
-      if (wordsModalState.confirmId === v.id) { doRestore(v.id); return; }
-      startRestoreConfirm(v.id);
-    });
-    btnCancelRestore.addEventListener('click', () => {
-      clearConfirmTimer();
-      wordsModalState.confirmId = 0;
-      renderWordsModal();
-    });
     btnCopy.addEventListener('click', () => copyWordVersion(viewedWordVersion()));
     btnTxt.addEventListener('click', () => exportWordVersion(viewedWordVersion()));
-    wordsActs.append(btnRestore, btnCancelRestore, btnCopy, btnTxt);
+    wordsActs.append(btnCopy, btnTxt);
     wordsBar.append(wordsInfo, wordsActs);
     const chipsBox = el('div', 'word-chips wm-chips');
     paneWords.append(wordsBar, chipsBox);
@@ -5141,7 +5120,7 @@
     refs.wordsModal = {
       overlay, card, meta, side, main, tabBtns, tabs, searchWrap, searchInput, foldBtn,
       paneWords, wordsInfo, chipsBox,
-      paneEdit, editTa, editMeta, editDiff, btnSave, btnReset, btnRestore, btnCancelRestore
+      paneEdit, editTa, editMeta, editDiff, btnSave, btnReset
     };
 
     closeX.addEventListener('click', () => closeWordsModal());
@@ -5191,8 +5170,6 @@
 
   function closeWordsModal() {
     wordsModalState.open = false;
-    wordsModalState.confirmId = 0;
-    clearConfirmTimer();
     closeSelectMenu();                        // 弹窗里的 A/B 下拉可能正开着
     const n = refs.wordsModal;
     refs.wordsModal = null;
@@ -5200,13 +5177,6 @@
     const back = wordsModalState.returnFocus;
     wordsModalState.returnFocus = null;
     if (back && back.focus) setTimeout(() => { try { back.focus(); } catch (_) { /* ignore */ } }, 30);
-  }
-
-  function clearConfirmTimer() {
-    if (wordsModalState.confirmTimer) {
-      clearTimeout(wordsModalState.confirmTimer);
-      wordsModalState.confirmTimer = 0;
-    }
   }
 
   /** 正在看的是不是「历史版」（不是当前生效那版）—— 历史版只读：没有「更新」页，也没有标签栏 */
@@ -5219,7 +5189,7 @@
   /**
    * 版本在界面上的编号（v1.17.3）：**当前版不编号**（那一行只显示「当前」胶囊），
    * 历史版从 `#1` 起、按"越新越小"排 —— 列表本来就是新在上，所以自上而下是 #1、#2…
-   * 注意：这只是显示编号，存储用的 `ver.id` 仍是单调递增的真实 id（`恢复自 #k` 那类备注也用它换算）。
+   * 注意：这只是显示编号，存储用的 `ver.id` 仍是单调递增的真实 id（`note` 那类文字才用它换算）。
    */
   function versionLabel(ver) {
     if (!ver) return '';
@@ -5309,41 +5279,6 @@
     renderWordsModal();
   }
 
-  function startRestoreConfirm(id) {
-    wordsModalState.confirmId = id;
-    clearConfirmTimer();
-    // 不弹二级确认框：按钮就地变成「确认恢复 / 取消」，6 秒后自动退回
-    wordsModalState.confirmTimer = setTimeout(() => {
-      wordsModalState.confirmId = 0;
-      wordsModalState.confirmTimer = 0;
-      renderWordsModal();          // 恢复按钮在「词库」页工具条里，重绘整窗最省心
-    }, 6000);
-    renderWordsModal();
-  }
-
-  /** 恢复某一版 = **生成一个新版本**（历史 append-only：误恢复后还能找回来） */
-  function doRestore(id) {
-    const ver = findWordVersion(id);
-    if (!ver) return;
-    clearConfirmTimer();
-    wordsModalState.confirmId = 0;
-    // 显示编号必须在写库**之前**取：写进去以后会多出一版，所有历史编号整体后移一位
-    const label = versionLabel(ver);
-    const before = settings.deleteWords.slice();
-    if (!commitWords(ver.words, 'restore', '恢复自 ' + label)) {
-      renderWordsModal();          // 失败也只重绘，别把弹窗留在半截状态
-      return;
-    }
-    const d = diffWords(before, settings.deleteWords);
-    const cur = activeWordVersion();
-    wordsModalState.dirty = false;
-    wordsModalState.draft = settings.deleteWords.join(',');
-    wordsModalState.selId = cur ? cur.id : id;
-    if (refs.wordsModal) refs.wordsModal.editTa.value = wordsModalState.draft;
-    renderWordsModal();
-    log('词库已恢复自 ' + label, '+' + d.added.length + ' −' + d.removed.length);
-  }
-
   /** 保存编辑页草稿 */
   function saveDraftWords() {
     const n = refs.wordsModal;
@@ -5400,9 +5335,8 @@
         if (!d.added.length && !d.removed.length && d.orderOnly) delta.appendChild(el('b', 'is-order', '⇅'));
         botRow.appendChild(delta);
       }
-      /* v1.17.2：行内不再挂「恢复 / 导出」——
-         恢复挪到「词库」页工具条（只对历史版出现），导出那里本来就有「导出 TXT」。
-         行内零按钮，也就不再需要"悬停才显形"的占位行（行高不再随鼠标跳）。 */
+      /* v1.17.2 起行内零按钮（恢复 / 导出都撤了，v1.17.4 连恢复本身也删了）——
+         也就不再需要"悬停才显形"的占位行，行高不再随鼠标跳。 */
       row.append(topRow);
       if (hasDelta) row.appendChild(botRow);
       row.addEventListener('click', () => selectWordVersion(ver.id));
@@ -5422,16 +5356,6 @@
   function paintWordsPane(n) {
     if (!n) return;
     const ver = viewedWordVersion();
-    /* 「恢复为当前」只在看历史版时出现；点一次变「确认恢复」，6 秒自动退回。
-       v1.17.2：原来每行都挂「恢复 / 导出」，悬停才显形导致行高跳动，当前版那行还多一个没用的「导出」。 */
-    const confirming = !!(ver && wordsModalState.confirmId === ver.id);
-    n.btnRestore.classList.toggle('is-hidden', !isViewingHistory());
-    n.btnCancelRestore.classList.toggle('is-hidden', !confirming);
-    n.btnRestore.classList.toggle('is-danger', confirming);
-    n.btnRestore.textContent = confirming ? '确认恢复' : '恢复为当前';
-    n.btnRestore.title = confirming
-      ? '再点一次就把这一版设为当前词库（会生成新版本，历史不删）'
-      : '把这一版重新设为当前词库（会生成一个新版本，历史不删）';
     n.chipsBox.textContent = '';
     if (!ver) {
       n.wordsInfo.textContent = '还没有版本';
