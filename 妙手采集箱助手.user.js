@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.17.2
+// @version      1.17.3
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.17.2';
+  const SCRIPT_VERSION = '1.17.3';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -3751,6 +3751,19 @@
     /* 头 */
     .wm-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 12px 10px 16px; }
     .wm-titles { flex: 1; min-width: 0; }
+    /* 折叠按钮：展开 / 收起左侧版本列表（v1.17.3，默认收起，展开时 chevron 转 90°） */
+    .wm-fold {
+      flex: none;
+      width: 22px; height: 22px; margin-top: -1px;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: var(--r-xs);
+      background: transparent; color: var(--ink-3);
+      cursor: pointer;
+      transition: color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+    }
+    .wm-fold svg { display: block; width: 11px; height: 11px; transition: transform 0.18s var(--ease); }
+    .wm-fold:hover { color: var(--ink); background: rgba(120, 120, 128, 0.10); }
+    .wm-fold.is-on svg { transform: rotate(90deg); }
     .wm-title { font-size: 13px; font-weight: 680; letter-spacing: -0.2px; }
     .wm-meta {
       margin-top: 2px;
@@ -3781,6 +3794,7 @@
       scrollbar-color: transparent transparent;
     }
     .wm-side:hover { scrollbar-color: rgba(60, 60, 67, 0.30) transparent; }
+    .wm-side.is-hidden { display: none; }
     .wm-main {
       flex: 1; min-width: 0;
       display: flex; flex-direction: column;
@@ -3867,6 +3881,7 @@
     /* 权重要比后面的 .wm-info（flex:1）高，否则盒子会被拉满整行 —— 用 .wm-top 前缀压住 */
     .wm-top .wm-top-info { flex: none; margin-left: auto; justify-content: flex-end; }
     .wm-top .wm-top-info.is-hidden { display: none; }
+    .wm-tabs.is-hidden { display: none; }
     .wm-tabs { display: flex; gap: 2px; flex: none; padding: 2px; border-radius: var(--r-sm); background: var(--fill-1); }
     .wm-tab {
       border: none; background: transparent;
@@ -3912,24 +3927,6 @@
     .wm-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
     .wm-pane.is-hidden { display: none; }
     .wm-bar { display: flex; align-items: center; gap: 6px; padding-bottom: 7px; }
-    .wm-sel { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
-    .wm-sel-label { flex: none; font-size: 9.5px; font-weight: 600; color: var(--ink-3); }
-    .wm-sel .asel { flex: 1; min-width: 0; }
-    .wm-sel .asel-trigger { padding: 3px 7px; font-size: 10px; }
-    .wm-arrow { flex: none; font-size: 10px; color: var(--ink-3); }
-    .wm-check {
-      flex: none;
-      border: none;
-      padding: 3px 8px;
-      border-radius: var(--r-xs);
-      background: var(--fill-1);
-      color: var(--ink-2);
-      font-family: inherit; font-size: 10px; font-weight: 600;
-      cursor: pointer;
-      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
-    }
-    .wm-check:hover { background: var(--fill-2); color: var(--ink); }
-    .wm-check.is-on { background: var(--accent-tint); color: var(--accent-deep); box-shadow: inset 0 0 0 0.5px var(--accent-line); }
     .wm-pane-body {
       flex: 1; min-height: 0;
       overflow-y: auto; overscroll-behavior: contain;
@@ -3951,12 +3948,6 @@
     .wm-pane-body:hover { scrollbar-color: rgba(60, 60, 67, 0.30) transparent; }
 
     /* 差异摘要与行 */
-    .wm-sum { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; padding: 0 0 8px; font-size: 10px; color: var(--ink-2); }
-    .wm-sum-item { display: inline-flex; align-items: baseline; gap: 3px; }
-    .wm-sum-item b { font-size: 11px; font-weight: 700; }
-    .wm-sum-item b.is-add { color: #1E8E3E; }
-    .wm-sum-item b.is-del { color: #D70015; }
-    .wm-sum-who { margin-left: auto; font-size: 9.5px; color: var(--ink-3); }
     .wm-sect { margin: 6px 0 2px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px; color: var(--ink-3); }
     .wm-sect.is-del { color: #C0261B; }
     .wm-sect.is-add { color: #1E7A38; }
@@ -4862,13 +4853,11 @@
    */
   const wordsModalState = {
     open: false,
-    tab: 'words',         // 'words' 词库 ｜ 'edit' 编辑 ｜ 'diff' 对比（默认停在第一个）
-    selId: 0,             // 右栏正在看的版本（词条页 / 导出目标）
-    aId: 0,               // 差异页「基准 A」
-    bId: 0,               // 差异页「对比 B」
-    showKept: false,      // 差异页是否列出未变化的词
-    query: '',            // 搜索框（词条页与差异页共用）
-    draft: '',            // 编辑页草稿（关弹窗不丢，刷新才丢）
+    tab: 'words',         // 'words' 词库 ｜ 'edit' 更新（默认停在第一个）
+    sideOpen: false,      // 左侧版本列表是否展开（v1.17.3：默认收起，由 wm-fold 切换）
+    selId: 0,             // 右栏正在看的版本（词库页 / 导出目标）
+    query: '',            // 搜索框（只服务「词库」页）
+    draft: '',            // 更新页草稿（关弹窗不丢，刷新才丢）
     dirty: false,         // 草稿是否已被改过（切页/重开不清空，避免手滑丢工作）
     confirmId: 0,         // 正在二次确认「恢复」的版本 id
     confirmTimer: 0,
@@ -4884,7 +4873,7 @@
     btn.textContent = '管理词库（' + n + '）';
     btn.title = '词库版本管理：' + n + ' 词 · ' + wordsStore.list.length + '/' + WORDS_MAX_VERSIONS + ' 版'
       + (cur ? ' · 最新 ' + fmtVersionTime(cur.at, 'short') : '')
-      + '（版本对比 / 搜索 / 编辑 / 导出）';
+      + '（版本历史 / 搜索 / 更新 / 导出）';
   }
 
   /** 弹窗里的小节标题 */
@@ -5004,6 +4993,11 @@
     + '<circle cx="5" cy="5" r="3.3" fill="none" stroke="currentColor" stroke-width="1.3"/>'
     + '<path d="M7.5 7.5L10.4 10.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
 
+  /** 折叠图标（chevron）：收起时朝右，展开时朝下（由 CSS 旋转） */
+  const WM_CHEV_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true">'
+    + '<path d="M4.2 2.6L7.6 6L4.2 9.4" fill="none" stroke="currentColor" stroke-width="1.5"'
+    + ' stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
   /**
    * 建整块弹窗 DOM（每次打开都新建，关闭整块移除 —— 监听挂在节点上，随节点一起释放，
    * **绝不往 document 上挂**，见 步骤.md §二 D 的监听泄漏教训）。
@@ -5018,7 +5012,17 @@
     const card = el('div', 'wmodal');
 
     /* 头：标题 + 版本概览 + 关闭 */
+    /* 头：折叠按钮 + 标题 + 版本概览 + 关闭 */
     const head = el('div', 'wm-head');
+    const foldBtn = el('button', 'wm-fold');
+    foldBtn.type = 'button';
+    foldBtn.innerHTML = WM_CHEV_SVG;
+    foldBtn.title = '展开 / 收起版本列表';
+    foldBtn.setAttribute('aria-label', '展开或收起版本列表');
+    foldBtn.addEventListener('click', () => {
+      wordsModalState.sideOpen = !wordsModalState.sideOpen;
+      paintSideState(refs.wordsModal);
+    });
     const titles = el('div', 'wm-titles');
     const meta = el('div', 'wm-meta', '');
     titles.append(el('div', 'wm-title', '词库管理'), meta);
@@ -5026,7 +5030,7 @@
     closeX.type = 'button';
     closeX.title = '关闭（Esc）';
     closeX.setAttribute('aria-label', '关闭词库管理');
-    head.append(titles, closeX);
+    head.append(foldBtn, titles, closeX);
 
     /* 主体：左＝版本时间线，右＝内容 */
     const bodyEl = el('div', 'wm-body');
@@ -5037,7 +5041,7 @@
     const tabs = el('div', 'wm-tabs');
     tabs.setAttribute('role', 'tablist');
     const tabBtns = {};
-    [['words', '词库'], ['edit', '编辑'], ['diff', '对比']].forEach((pair) => {
+    [['words', '词库'], ['edit', '更新']].forEach((pair) => {
       const b = el('button', 'wm-tab', pair[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -5061,48 +5065,12 @@
       const n = refs.wordsModal;
       if (!n) return;
       paintWordsPane(n);
-      paintDiffPane(n);
     });
     searchWrap.append(ico, searchInput);
     /* 编辑页的「识别 N 词」放到顶部这一行的最右（v1.17.2）：不占正文高度，也不跟按钮抢位置 */
     const editMeta = el('div', 'wm-info wm-top-info is-hidden', '');
     top.append(tabs, searchWrap, editMeta);
     main.appendChild(top);
-
-    /* —— 差异页：基准 A → 对比 B —— */
-    const paneDiff = el('div', 'wm-pane');
-    const diffBar = el('div', 'wm-bar');
-    const aField = createAppleSelect((label) => {
-      const n = refs.wordsModal;
-      const id = n && n.optMap.get(label);
-      if (!id) return;
-      wordsModalState.aId = id;
-      paintDiffPane(n);
-    });
-    const bField = createAppleSelect((label) => {
-      const n = refs.wordsModal;
-      const id = n && n.optMap.get(label);
-      if (!id) return;
-      wordsModalState.bId = id;
-      wordsModalState.selId = id;
-      paintVersionList(n);
-      paintWordsPane(n);
-      paintDiffPane(n);
-    });
-    const aWrap = el('div', 'wm-sel');
-    aWrap.append(el('span', 'wm-sel-label', '基准 A'), aField.wrap);
-    const bWrap = el('div', 'wm-sel');
-    bWrap.append(el('span', 'wm-sel-label', '对比 B'), bField.wrap);
-    const keptToggle = el('button', 'wm-check', '显示未变词');
-    keptToggle.type = 'button';
-    keptToggle.setAttribute('aria-pressed', 'false');
-    keptToggle.addEventListener('click', () => {
-      wordsModalState.showKept = !wordsModalState.showKept;
-      paintDiffPane(refs.wordsModal);
-    });
-    diffBar.append(aWrap, el('span', 'wm-arrow', '→'), bWrap, keptToggle);
-    const diffBody = el('div', 'wm-pane-body');
-    paneDiff.append(diffBar, diffBody);
 
     /* —— 词条页：整版词条 + 搜索高亮 + 按版本导出 —— */
     const paneWords = el('div', 'wm-pane');
@@ -5116,7 +5084,7 @@
     const btnTxt = el('button', 'wm-mini', '导出 TXT');
     [btnRestore, btnCancelRestore, btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
     btnCopy.title = '复制当前这一版的词（逗号分隔，可直接粘到别处）';
-    btnTxt.title = '把当前这一版导出为 TXT：逗号分隔、不带 BOM，可原样再粘回编辑框';
+    btnTxt.title = '把当前这一版导出为 TXT：逗号分隔、不带 BOM，可原样粘回「更新」页';
     btnRestore.addEventListener('click', () => {
       const v = viewedWordVersion();
       if (!v) return;
@@ -5163,7 +5131,7 @@
     editBar.append(btnReset, btnSave);
     paneEdit.append(editTa, editDiff, editBar);
 
-    main.append(paneDiff, paneWords, paneEdit);
+    main.append(paneWords, paneEdit);
     bodyEl.append(side, main);
 
     // 无底栏（v1.17.1）：关闭走右上角 ×（或 Esc / 点遮罩），导出只在每个版本自己的工具条里
@@ -5171,8 +5139,7 @@
     overlay.appendChild(card);
 
     refs.wordsModal = {
-      overlay, card, meta, side, main, tabBtns, searchWrap, searchInput,
-      paneDiff, diffBody, aField, bField, keptToggle, optMap: new Map(),
+      overlay, card, meta, side, main, tabBtns, tabs, searchWrap, searchInput, foldBtn,
       paneWords, wordsInfo, chipsBox,
       paneEdit, editTa, editMeta, editDiff, btnSave, btnReset, btnRestore, btnCancelRestore
     };
@@ -5210,12 +5177,7 @@
     if (!wasOpen) {
       wordsModalState.returnFocus = (shadow && shadow.activeElement) || document.activeElement || null;
       const cur = activeWordVersion();
-      const idx = wordsStore.list.findIndex((v) => v.id === (cur ? cur.id : -1));
-      const prev = idx >= 0 ? wordsStore.list[idx + 1] : null;
-      const selId = cur ? cur.id : (((wordsStore.list[0] || {}).id) || 0);
-      wordsModalState.selId = selId;
-      wordsModalState.bId = selId;
-      wordsModalState.aId = prev ? prev.id : selId;
+      wordsModalState.selId = cur ? cur.id : (((wordsStore.list[0] || {}).id) || 0);
       if (!wordsModalState.dirty) wordsModalState.draft = settings.deleteWords.join(',');
     }
     const n = mountWordsModal();
@@ -5247,24 +5209,38 @@
     }
   }
 
-  /** 正在看的是不是「历史版」（不是当前生效那版）—— 历史版只读：没有「编辑」页 */
+  /** 正在看的是不是「历史版」（不是当前生效那版）—— 历史版只读：没有「更新」页，也没有标签栏 */
   function isViewingHistory() {
     const v = viewedWordVersion();
     const cur = activeWordVersion();
     return !!(v && cur && v.id !== cur.id);
   }
 
+  /**
+   * 版本在界面上的编号（v1.17.3）：**当前版不编号**（那一行只显示「当前」胶囊），
+   * 历史版从 `#1` 起、按"越新越小"排 —— 列表本来就是新在上，所以自上而下是 #1、#2…
+   * 注意：这只是显示编号，存储用的 `ver.id` 仍是单调递增的真实 id（`恢复自 #k` 那类备注也用它换算）。
+   */
+  function versionLabel(ver) {
+    if (!ver) return '';
+    const cur = activeWordVersion();
+    if (cur && cur.id === ver.id) return '当前';
+    const hist = wordsStore.list.filter((v) => !cur || v.id !== cur.id);
+    const pos = hist.findIndex((v) => v.id === ver.id);
+    return pos < 0 ? '' : '#' + (pos + 1);
+  }
+
   function renderWordsModal() {
     const n = refs.wordsModal;
     refreshWordsBtn();                        // 面板按钮上的 N 词 / 版数始终同步
     if (!n || !wordsModalState.open) return;
-    // 历史版只读：停在「编辑」时退回「词库」，免得出现"正在编辑历史版"的错觉
+    // 历史版只读：停在「更新」时退回「词库」，免得出现"正在编辑历史版"的错觉
     if (wordsModalState.tab === 'edit' && isViewingHistory()) wordsModalState.tab = 'words';
     paintModalHead(n);
     paintVersionList(n);
     paintTabState(n);
     paintWordsPane(n);
-    paintDiffPane(n);
+    paintSideState(n);
     paintEditMeta(n);
   }
 
@@ -5277,19 +5253,28 @@
         : ' · 还没有版本');
   }
 
+  /** 左侧版本列表的展开状态（默认收起）—— 折叠按钮与隐藏类都只走这一处 */
+  function paintSideState(n) {
+    if (!n) return;
+    n.side.classList.toggle('is-hidden', !wordsModalState.sideOpen);
+    if (n.foldBtn) {
+      n.foldBtn.classList.toggle('is-on', !!wordsModalState.sideOpen);
+      n.foldBtn.setAttribute('aria-expanded', wordsModalState.sideOpen ? 'true' : 'false');
+    }
+  }
+
   function paintTabState(n) {
     const hist = isViewingHistory();
+    // 看历史版时只剩「词库」一页 → 整条分段控件都不显示（v1.17.3）
+    n.tabs.classList.toggle('is-hidden', hist);
     Object.keys(n.tabBtns).forEach((k) => {
       const on = wordsModalState.tab === k;
       n.tabBtns[k].classList.toggle('is-on', on);
       n.tabBtns[k].setAttribute('aria-selected', on ? 'true' : 'false');
-      // 历史版只读：整颗「编辑」标签页不显示（不是禁用 —— 禁用会让人以为自己点错了）
-      n.tabBtns[k].classList.toggle('is-hidden', k === 'edit' && hist);
     });
     n.searchWrap.classList.toggle('is-hidden', wordsModalState.tab === 'edit');
-    // 编辑页的「识别 N 词」挪到了顶部那一行，只在编辑页显示
+    // 更新页的「识别 N 词」在最右，只在更新页显示
     n.editMeta.classList.toggle('is-hidden', wordsModalState.tab !== 'edit');
-    n.paneDiff.classList.toggle('is-hidden', wordsModalState.tab !== 'diff');
     n.paneWords.classList.toggle('is-hidden', wordsModalState.tab !== 'words');
     n.paneEdit.classList.toggle('is-hidden', wordsModalState.tab !== 'edit');
   }
@@ -5312,20 +5297,13 @@
 
   /**
    * 点某一版：**一次点击**就切到这一版的页面（v1.17.2）。
-   * 原来点历史版只改选中态，得再点一次才会看到内容 —— 现在直接落到「词库」页；
-   * 在「对比」页则顺带把它设成「对比 B」（A 自动取它上一版）。
+   * 选中即重绘；当时停在「更新」页就先切回「词库」（历史版没有更新页）。
    */
   function selectWordVersion(id) {
     const ver = findWordVersion(id);
     if (!ver) return;
     wordsModalState.selId = id;
-    if (wordsModalState.tab === 'diff') {
-      const idx = wordsStore.list.findIndex((v) => v.id === id);
-      const prev = idx >= 0 ? wordsStore.list[idx + 1] : null;
-      wordsModalState.bId = id;
-      wordsModalState.aId = prev ? prev.id : id;
-    }
-    // 停在「编辑」时点历史版 → 切到「词库」（历史版没有编辑页），一次点击即见效
+    // 停在「更新」时点历史版 → 切到「词库」（历史版没有更新页），一次点击即见效
     const cur = activeWordVersion();
     if (wordsModalState.tab === 'edit' && (!cur || cur.id !== id)) wordsModalState.tab = 'words';
     renderWordsModal();
@@ -5349,8 +5327,10 @@
     if (!ver) return;
     clearConfirmTimer();
     wordsModalState.confirmId = 0;
+    // 显示编号必须在写库**之前**取：写进去以后会多出一版，所有历史编号整体后移一位
+    const label = versionLabel(ver);
     const before = settings.deleteWords.slice();
-    if (!commitWords(ver.words, 'restore', '恢复自 #' + ver.id)) {
+    if (!commitWords(ver.words, 'restore', '恢复自 ' + label)) {
       renderWordsModal();          // 失败也只重绘，别把弹窗留在半截状态
       return;
     }
@@ -5359,14 +5339,9 @@
     wordsModalState.dirty = false;
     wordsModalState.draft = settings.deleteWords.join(',');
     wordsModalState.selId = cur ? cur.id : id;
-    wordsModalState.bId = wordsModalState.selId;
-    const idx = wordsStore.list.findIndex((v) => v.id === wordsModalState.selId);
-    wordsModalState.aId = idx >= 0 && wordsStore.list[idx + 1]
-      ? wordsStore.list[idx + 1].id
-      : wordsModalState.selId;
     if (refs.wordsModal) refs.wordsModal.editTa.value = wordsModalState.draft;
     renderWordsModal();
-    log('词库已恢复自 #' + ver.id, '+' + d.added.length + ' −' + d.removed.length);
+    log('词库已恢复自 ' + label, '+' + d.added.length + ' −' + d.removed.length);
   }
 
   /** 保存编辑页草稿 */
@@ -5382,13 +5357,8 @@
     if (n) n.editTa.value = wordsModalState.draft;
     const cur = activeWordVersion();
     wordsModalState.selId = cur ? cur.id : wordsModalState.selId;
-    wordsModalState.bId = wordsModalState.selId;
-    const idx = wordsStore.list.findIndex((v) => v.id === wordsModalState.selId);
-    wordsModalState.aId = idx >= 0 && wordsStore.list[idx + 1]
-      ? wordsStore.list[idx + 1].id
-      : wordsModalState.selId;
-    // 存完直接跳到「差异」：让人马上看见"我刚存了什么"，而不是停在输入框里猜
-    wordsModalState.tab = 'diff';
+    // 存完直接回「词库」：让人马上看见"我刚存了什么"（对比页已随 v1.17.3 去掉）
+    wordsModalState.tab = 'words';
     renderWordsModal();
   }
 
@@ -5411,11 +5381,13 @@
         + (isCur ? ' is-cur' : '')
         + (ver.id === wordsModalState.selId ? ' is-sel' : ''));
       row.tabIndex = 0;
-      row.title = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'full') + ' · ' + ver.words.length + ' 词'
+      const label = versionLabel(ver);
+      row.title = label + ' · ' + fmtVersionTime(ver.at, 'full') + ' · ' + ver.words.length + ' 词'
         + (ver.note ? ' · ' + ver.note : '');
       const topRow = el('div', 'wm-item-top');
-      topRow.append(el('span', 'wm-id', '#' + ver.id));
+      // 当前版不编号，只挂「当前」胶囊；历史版自上而下 #1、#2…（v1.17.3）
       if (isCur) topRow.append(el('span', 'wm-cur', '当前'));
+      else topRow.append(el('span', 'wm-id', label));
       // 词条数紧跟「当前」胶囊（不再单独占第二行），时间靠右
       topRow.append(el('span', 'wm-count', ver.words.length + ' 词'));
       topRow.append(el('span', 'wm-time', fmtVersionTime(ver.at, 'short')));
@@ -5470,10 +5442,12 @@
     const list = q
       ? ver.words.filter((w) => w.toLowerCase().includes(q.toLowerCase()))
       : ver.words;
-    n.wordsInfo.textContent = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'short')
+    n.wordsInfo.textContent = (ver.id === ((activeWordVersion() || {}).id)
+      ? '当前生效'
+      : '历史 ' + versionLabel(ver))
       + ' · ' + ver.words.length + ' 词'
-      + (q ? ' · 命中 ' + list.length : '')
-      + (ver.id === ((activeWordVersion() || {}).id) ? ' · 当前生效' : ' · 历史版本');
+      + ' · ' + fmtVersionTime(ver.at, 'short')
+      + (q ? ' · 命中 ' + list.length : '');
     if (!list.length) {
       n.chipsBox.appendChild(el('div', 'word-empty',
         q ? '这一版里没有含「' + q + '」的词' : '这一版是空词库'));
@@ -5487,107 +5461,6 @@
     });
   }
 
-  function paintDiffPane(n) {
-    if (!n) return;
-    /* 下拉选项：文案要唯一（带 #id），所以用 Map 从文案找回 id */
-    n.optMap.clear();
-    const opts = wordsStore.list.map((ver, i) => {
-      const label = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'short') + ' · ' + ver.words.length + ' 词'
-        + (i === 0 ? ' · 当前' : '');
-      n.optMap.set(label, ver.id);
-      return label;
-    });
-    const labelOf = (id) => {
-      for (const pair of n.optMap.entries()) if (pair[1] === id) return pair[0];
-      return '';
-    };
-    const oldest = wordsStore.list.length ? wordsStore.list[wordsStore.list.length - 1] : null;
-    const newest = activeWordVersion();
-    const aId = findWordVersion(wordsModalState.aId) ? wordsModalState.aId : (oldest ? oldest.id : 0);
-    const bId = findWordVersion(wordsModalState.bId) ? wordsModalState.bId : (newest ? newest.id : 0);
-    n.aField.setOptions(opts, { value: labelOf(aId), placeholder: '暂无版本' });
-    n.bField.setOptions(opts, { value: labelOf(bId), placeholder: '暂无版本' });
-    n.aField.setDisabled(!opts.length);
-    n.bField.setDisabled(!opts.length);
-    n.keptToggle.classList.toggle('is-on', !!wordsModalState.showKept);
-    n.keptToggle.setAttribute('aria-pressed', wordsModalState.showKept ? 'true' : 'false');
-
-    const box = n.diffBody;
-    box.textContent = '';
-    const va = findWordVersion(aId);
-    const vb = findWordVersion(bId);
-    if (wordsStore.list.length < 2) {
-      box.appendChild(el('div', 'wm-empty',
-        '只有 1 个版本，暂时没法对比 —— 改一次词库（或恢复某一版）就会产生第 2 版。'));
-      return;
-    }
-    if (!va || !vb) {
-      box.appendChild(el('div', 'wm-empty', '没有可对比的版本'));
-      return;
-    }
-    if (va.id === vb.id) {
-      box.appendChild(el('div', 'wm-empty', '基准和对比选的是同一版（#' + va.id + '），换一个再比。'));
-      return;
-    }
-
-    const d = diffWords(va.words, vb.words);
-    const q = wordsModalState.query.trim();
-    const ql = q.toLowerCase();
-    const hit = (w) => !ql || w.toLowerCase().includes(ql);
-
-    const sum = el('div', 'wm-sum');
-    const sumItem = (cls, num, text) => {
-      const s = el('span', 'wm-sum-item');
-      s.append(el('b', cls || '', String(num)), el('span', '', text));
-      return s;
-    };
-    sum.append(
-      sumItem('is-add', d.added.length, '新增'),
-      sumItem('is-del', d.removed.length, '删除'),
-      sumItem('', d.kept, '未变'),
-      el('span', 'wm-sum-who', '#' + va.id + ' → #' + vb.id)
-    );
-    box.appendChild(sum);
-
-    if (!d.added.length && !d.removed.length && !d.orderOnly) {
-      box.appendChild(el('div', 'wm-empty',
-        '这两版词条完全相同（#' + va.id + ' 与 #' + vb.id + '，共 ' + va.words.length + ' 词）'));
-      return;
-    }
-    if (d.orderOnly) {
-      box.appendChild(el('div', 'wm-note', '词条相同，只有顺序不同 —— 顺序不影响删词结果（执行前会按长度重排）'));
-    }
-
-    const rows = el('div', 'wm-diff');
-    const pushRow = (kind, w) => {
-      if (!hit(w)) return;
-      const row = el('div', 'wm-diff-row is-' + kind);
-      row.append(el('span', 'wm-sign', kind === 'del' ? '−' : (kind === 'add' ? '+' : ' ')));
-      const txt = el('span', 'wm-diff-text');
-      fillHighlight(txt, w, q);
-      row.appendChild(txt);
-      rows.appendChild(row);
-    };
-    if (d.removed.length) {
-      rows.appendChild(wmSection('已删除 −' + d.removed.length, 'del'));
-      d.removed.forEach((w) => pushRow('del', w));
-    }
-    if (d.added.length) {
-      rows.appendChild(wmSection('新增 +' + d.added.length, 'add'));
-      d.added.forEach((w) => pushRow('add', w));
-    }
-    if (wordsModalState.showKept) {
-      const keptWords = vb.words.filter((w) => va.words.indexOf(w) >= 0);
-      rows.appendChild(wmSection('未变 ' + keptWords.length, 'keep'));
-      keptWords.forEach((w) => pushRow('keep', w));
-    }
-    // 搜索把变化项全滤掉时，别让人对着空白以为"没差异"
-    if (!rows.querySelector('.wm-diff-row') && q) {
-      box.appendChild(el('div', 'wm-empty', '两版之间没有含「' + q + '」的变化项'));
-      return;
-    }
-    box.appendChild(rows);
-  }
 
   /** 编辑页：识别统计 + 与**当前生效词库**的实时差异 + 按钮文案（带 +n −m） */
   function paintEditMeta(n) {
