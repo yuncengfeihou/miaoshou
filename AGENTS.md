@@ -41,16 +41,20 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.1，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.15.2，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
-| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；4 个脚本请保留**：两个 `test-*.mjs`（断言回归）+ 两个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
+| `.playwright-mcp/` | 临时产物（快照/日志/注入体/测试脚本）。**注入体产物可删可重建；5 个脚本请保留**：三个 `test-*.mjs`（断言/迁移回归）+ 两个 `make-inject*.mjs`（唯一可用的剥头实现，见 §4） |
+
+> **`@name` 从 2026-10-20 起固定不带版本号**：版本只由 `@version` / `SCRIPT_VERSION` 表达。
+> 若 TM 里还留着旧 `@name`（带 `1.15.x` 前缀）的条目，升级后请删除；否则 TM 会把它当成另一个脚本，
+> 触发 §4 的「双实例互顶」，表现为点了没反应 / 步骤跑一半断 / toast 不见。
 
 ---
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.15.1，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.15.2，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -205,8 +209,9 @@ makeTitleBuilder 标题改写纯函数（预览改写与落库复核共用同一
 
 未发布守卫        collectStatusTabs / filterNameOfTab / currentCollectFilter
                   unpublishedTab / ensureUnpublishedFilter / assertUnpublishedOnly
-                  （两层：① 步骤 1 主动切换到「未发布」；② 写入前断言。
-                    读取优先级：先读 input.value 枚举，读不到才退回文本）
+                  assertReadAllContext（设置区「读取模板列表」在采集箱页也要求「未发布」）
+                  （三层：① 步骤 1 主动切换到「未发布」；② 写入前断言；
+                    ③ 读取模板列表/开弹窗前断言。读取优先级：先读 input.value 枚举，读不到才退回文本）
 
 写入闸门          所有落库入口都过 assertUnpublishedOnly（共 5 处）：
                     stepSelectAll 开头（第 2 步，切换之后再确认一次）
@@ -240,6 +245,8 @@ timer             startTimer / stopTimer（只改 .main-btn-time，不触发整�
 
 > 已删除、不要引用：`updateImportHint / settings.tplPreset / setImportOpen / toggleSettings`、
 > refs `setTplToggle / setTplHint / setTplFields / setImportHint / setImport / setImportBtn`。
+> 死代码清理又删掉：`SEL_RADIO / SEL_CHECKBOX / isChecked / uiState.mode / refs.setImportTa /
+> settings.knownTemplates / toggleView(force)`。
 
 ---
 
@@ -287,7 +294,7 @@ git -c http.proxy=http://127.0.0.1:7897 push  origin main
 ### 入库范围
 
 **入库**：`妙手采集箱助手.user.js`（交付物）、`AGENTS.md`、`步骤.md`、`最终审查报告.md`、
-`.playwright-mcp/` 下 **4 个脚本**（2 个 `test-*.mjs` + 2 个 `make-inject*.mjs`）。
+`.playwright-mcp/` 下 **5 个脚本**（3 个 `test-*.mjs` + 2 个 `make-inject*.mjs`）。
 
 **不入库**（`.gitignore` 已挡）：`inject-body.js` / `inject-test.js` 等注入体产物（可重建）、
 `.playwright-mcp/_*/` 临时目录、日志、截图、`Thumbs.db`。
@@ -315,9 +322,10 @@ git diff --cached --stat
 node --check "妙手采集箱助手.user.js"                        # 语法
 Select-String -Path "妙手采集箱助手.user.js" -Pattern "发布"  # 红线（应只命中注释/提示文字）
 
-# 改了 judgeSaved / attachVerify 就必须跑这两条（见 §8.1）
+# 改了 judgeSaved / attachVerify / loadSettings 就必须跑这三条（见 §8.1）
 node .playwright-mcp/test-judgesaved.mjs      # 19 例：6 该通过 + 13 该失败
 node .playwright-mcp/test-attachverify.mjs    # 8 例：失败优先 / 不可用 / 通过 / null / 截断 / noAssertion
+node .playwright-mcp/test-settings.mjs        # 7 例：knownTemplates 只迁移一次、不写回/回灌
 node .playwright-mcp/make-inject.mjs          # 改了脚本就重跑，重建 inject-body.js
 ```
 

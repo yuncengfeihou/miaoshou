@@ -30,28 +30,29 @@ function extract(name) {
   throw new Error('函数 ' + name + ' 括号不配平');
 }
 
-const CFG = { titlePrefix: '[Print Design - No Texture]', colorName: '混合色', modelName: 'Jack', tryOnSize: 'M', tryOnFeel: '合适' };
-const VERIFY_FIELDS = {
-  title: (it) => it.title || '',
-  enTitle: (it) => (it.multiLanguageTitleMap || {}).en || '',
-  sizeChart: (it) => (it.sizeCharts || []).map((s) => s.sizeTemplateSource + ':' + s.sizeTemplateId).sort().join(','),
-  model: (it) => Object.values(it.shopIdAndGoodsModelReqMap || {}).map((m) => [m.modelName, m.sizeSpecName, m.tryOnResult].join('/')).sort().join(','),
-  colorNames: (it) => (((it.saleAttributes || []).find((a) => a.name === '颜色') || {}).values || []).map((v) => v.name).join(','),
-  saleValues: (it) => (it.saleAttributes || []).map((a) => a.name + '=' + (a.values || []).map((v) => v.name).join('+')).join(';')
-};
+function extractConstObject(name) {
+  const start = src.indexOf('const ' + name + ' = {');
+  if (start < 0) throw new Error('找不到常量 ' + name);
+  let i = src.indexOf('{', start), depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(src.indexOf('{', start), i + 1); }
+  }
+  throw new Error('常量 ' + name + ' 括号不配平');
+}
 
-function tryOnFeelCode(label) { return ({ '合适': '1', '偏大': '2', '偏小': '3' })[label] || '1'; }
+// 用生产 CFG / makeTitleBuilder / tryOnFeelCode，避免测试副本与产品代码漂移
+const CFG = new Function('return (' + extractConstObject('CFG') + ')')();
+const makeTitleBuilder = new Function('CFG', extract('makeTitleBuilder') + '\nreturn makeTitleBuilder;')(CFG);
+const tryOnFeelCode = new Function(extract('tryOnFeelCode') + '\nreturn tryOnFeelCode;')();
+const words = [...CFG.deleteWords].filter(Boolean).sort((a, b) => b.length - a.length);
 
+// judgeSaved 的 enTitle 已内联为 multiLanguageTitleMap.en，不再依赖 VERIFY_FIELDS 表
 const fnSrc = extract('judgeSaved');
-const judgeSaved = new Function('CFG', 'VERIFY_FIELDS', 'tryOnFeelCode', fnSrc + '\nreturn judgeSaved;')(CFG, VERIFY_FIELDS, tryOnFeelCode);
+const judgeSaved = new Function('CFG', 'tryOnFeelCode', fnSrc + '\nreturn judgeSaved;')(CFG, tryOnFeelCode);
 
 // ---- 测试夹具 ----
-const buildTitle = (o) => {
-  let v = o || '';
-  ['短袖', '透气'].forEach((w) => { v = v.split(w).join(''); });
-  v = v.replace(/[ \t]+/g, ' ').trim();
-  return v ? CFG.titlePrefix + ' ' + v : CFG.titlePrefix;
-};
+const buildTitle = makeTitleBuilder(words);
 const ctxOk = { buildTitle, sizeTemplateId: '401221', sizeTemplateName: '男士标码长袖T恤' };
 
 const good = {

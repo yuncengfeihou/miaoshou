@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         1.15.1妙手ERP · TEMU全托管采集箱 批量处理助手
+// @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.15.1
+// @version      1.15.2
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词条**只在点「立即更新」时**才整体替换。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,17 +41,10 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.15.1';
-  const SEL_RADIO = '.el-radio, .jx-radio';
-  const SEL_CHECKBOX = '.el-checkbox, .jx-checkbox';
+  const SCRIPT_VERSION = '1.15.2';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
-
-  /** 组件是否处于选中态 */
-  const isChecked = (el) =>
-    !!el && ((el.className && String(el.className).includes('is-checked')) ||
-      el.getAttribute('aria-checked') === 'true');
 
   /* ============================ 配置 ============================ */
 
@@ -178,10 +171,19 @@
    */
   function loadSettings() {
     try {
-      // v1 的键名是 msxb-settings-v1，读不到 v2 就回落到它做一次迁移
-      const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem('msxb-settings-v1');
+      /*
+       * v1 的键名是 msxb-settings-v1，读不到 v2 就回落到它做一次迁移。
+       *
+       * knownTemplates 只在“本次确实从 v1 读到”时迁移，且**不再写回 v2**。
+       * 早期版本把它一并写进 v2，导致下次加载又把旧模板名当成 v1 数据灌回
+       * tplOptions —— 即使用户点过「读取模板列表」整体替换，旧名字也会重新出现。
+       */
+      const v2raw = localStorage.getItem(STORE_KEY);
+      const v1raw = v2raw ? null : localStorage.getItem('msxb-settings-v1');
+      const raw = v2raw || v1raw;
       if (!raw) return;
       const o = JSON.parse(raw);
+      const fromV1 = !v2raw && !!v1raw;
       if (Array.isArray(o.deleteWords)) {
         settings.deleteWords = parseWords(o.deleteWords.join(','));
       }
@@ -202,13 +204,14 @@
           }
         });
       }
-      // v1 的 knownTemplates 是「见过的模板名」，并入产品/SKU 的候选项
-      if (Array.isArray(o.knownTemplates)) {
+      // 只迁移真正的 v1 数据；v2 里残留下来的 knownTemplates 一律忽略（见上方说明）
+      if (fromV1 && Array.isArray(o.knownTemplates)) {
         const extra = o.knownTemplates.filter((s) => typeof s === 'string' && s);
-        settings.knownTemplates = extra;
-        ['product', 'sku'].forEach((k) => {
-          settings.tplOptions[k] = parseWords([...settings.tplOptions[k], ...extra].join(','));
-        });
+        if (extra.length) {
+          ['product', 'sku'].forEach((k) => {
+            settings.tplOptions[k] = parseWords([...settings.tplOptions[k], ...extra].join(','));
+          });
+        }
       }
     } catch (e) {
       warn('读取设置失败，使用默认值:', e.message || e);
@@ -220,8 +223,7 @@
       localStorage.setItem(STORE_KEY, JSON.stringify({
         deleteWords: settings.deleteWords,
         tpl: settings.tpl,
-        tplOptions: settings.tplOptions,
-        knownTemplates: settings.knownTemplates
+        tplOptions: settings.tplOptions
       }));
       return true;
     } catch (e) {
@@ -252,6 +254,8 @@
    * 只读：只点开下拉看选项，**不点应用、不保存**，读完后收起弹窗（取消/关闭）。
    */
   async function probeTemplateOptions(kind, menuText, dlgText, label) {
+    // 在采集箱页时，开模板弹窗前必须先确认「未发布」；其它页面没有列表可碰，跳过
+    assertReadAllContext(dlgText + '弹窗');
     await pickTemplateMenu(menuText);
     const dlg = await waitFor(() => dialogByText(dlgText), { desc: dlgText + '弹窗', timeout: 12000 })
       .catch((e) => {
@@ -796,19 +800,11 @@
     };
   } catch (_) {}
 
-  /** 复核要看哪些字段（从接口 item 上取的纯函数，便于单测） */
-  const VERIFY_FIELDS = {
-    title: (it) => it.title || '',
-    enTitle: (it) => (it.multiLanguageTitleMap || {}).en || '',
-    sizeChart: (it) => (it.sizeCharts || [])
-      .map((s) => s.sizeTemplateSource + ':' + s.sizeTemplateId).sort().join(','),
-    model: (it) => Object.values(it.shopIdAndGoodsModelReqMap || {})
-      .map((m) => [m.modelName, m.sizeSpecName, m.tryOnResult].join('/')).sort().join(','),
-    colorNames: (it) => ((it.saleAttributes || []).find((a) => a.name === '颜色') || {}).values
-      ? ((it.saleAttributes || []).find((a) => a.name === '颜色').values || []).map((v) => v.name).join(',') : '',
-    saleValues: (it) => (it.saleAttributes || [])
-      .map((a) => a.name + '=' + (a.values || []).map((v) => v.name).join('+')).join(';')
-  };
+  /**
+   * 判据只取各自需要的字段，不再维护一张“通用字段表”：
+   * 英语标题直接读 `multiLanguageTitleMap.en`，其余步骤的字段取法都内联在 judgeSaved 对应分支里。
+   * 这样不会留下“定义了却没人读”的字段（同类问题见《最终审查报告》P2-7）。
+   */
 
   /** 试穿感受：面板上是中文，接口里是数字码（实测 合适=1） */
   function tryOnFeelCode(label) {
@@ -907,10 +903,9 @@
   function judgeSaved(stepId, before, after, ctx) {
     // 拿不到「保存后」数据 = 无法证明落库成功，绝不能当通过
     if (!after) return { ok: false, why: '保存后接口查不到这条商品' };
-    const V = VERIFY_FIELDS;
     switch (stepId) {
       case 'enTitle': {
-        const v = V.enTitle(after);
+        const v = (after.multiLanguageTitleMap || {}).en || '';
         return v === ' ' ? { ok: true } : { ok: false, why: '英语标题是 ' + JSON.stringify(v) };
       }
       case 'title': {
@@ -2648,7 +2643,6 @@
   const uiState = {
     running: false,
     view: 'settings',        // 默认显示设置页；'run'＝执行页（步骤 + 一键编辑）
-    mode: '',
     currentStep: null,
     steps: new Map()
   };
@@ -3158,7 +3152,6 @@
       background: var(--fill-1);
     }
     .settings.is-open { display: block; }
-    .settings.is-locked { opacity: 0.55; pointer-events: none; }
 
     .set-field { margin-bottom: 7px; }
     .set-label {
@@ -3459,8 +3452,6 @@
     /* 词库两个按钮都占满整行、文字居中（和「读取模板列表」一致） */
     .set-words-toggle { width: 100%; margin-bottom: 7px; text-align: center; }
     .set-apply-words { width: 100%; margin-bottom: 3px; text-align: center; }
-    .set-words-toggle { width: 100%; margin-bottom: 7px; text-align: center; }
-    .set-apply-words { width: 100%; margin-bottom: 3px; text-align: center; }
 
     /* 打开设置时隐藏步骤列表与主按钮 */
     .list.is-hidden, .foot.is-hidden { display: none; }
@@ -3639,7 +3630,7 @@
     }
 
     // 运行中主按钮＝「停止编辑」+ 已用时间（计时在按钮内部右侧，见 startTimer/paintTimer）
-    refs.mainBtn.disabled = false;
+    // 注意：主按钮必须始终保持可点（运行中要能触发停止）；这里不要改成 disabled = running。
     refs.mainBtn.classList.toggle('is-stop', uiState.running);
     const mainLabel = uiState.running ? '停止编辑' : '一键编辑';
     // 结构：<span class="main-btn-label">停止编辑</span><span class="main-btn-time">12s</span>
@@ -3703,7 +3694,6 @@
     if (uiState.running) return;
     closeSelectMenu();        // 开跑前收起可能展开的下拉浮层
     uiState.running = true;
-    uiState.mode = steps.length > 1 ? 'all' : 'single';
     uiState.startedAt = Date.now();   // 「刚开跑就别停」的保护窗口用；同时也计时起点
     stopRequested = false;
     startTimer();                     // 按钮内开始显示已用秒数
@@ -4251,6 +4241,8 @@
   }
   /** 【兜底】打开批量编辑面板读尺码表模板下拉（直连接口不成立时才走这里；只读，绝不保存） */
   async function probeSizeChartOptions() {
+    // 同 probeTemplateOptions：采集箱页上只允许在「未发布」下开面板
+    assertReadAllContext('尺码表模板弹窗');
     const dlg = await openBatchEdit('尺码表');
     const selectEl = dlg.querySelector('.size-template-select') ||
       dlg.querySelector('.el-select.jx-pro-select');
@@ -4363,8 +4355,19 @@
     return isCollectPage();
   }
 
+  /**
+   * 「读取模板列表」的上下文守卫。
+   * 不在采集箱页时没有列表可碰，允许读产品/SKU 直连接口；
+   * 在采集箱页则必须是「未发布」—— 否则可能读选中集、开批量编辑弹窗或点「全选」。
+   */
+  function assertReadAllContext(where) {
+    if (isCollectPage()) assertUnpublishedOnly(where);
+  }
+
   /** 一个都没勾时点一次「全选」（已有勾选就沿用用户的选择，不覆盖） */
   async function ensureSomeSelection() {
+    // 点「全选」会改勾选状态：在采集箱页时必须先确认当前是「未发布」
+    assertReadAllContext('读取模板列表 · 自动全选');
     if (selectedDetailIds().length) return false;
     const all = findByText('button', '全选', { exact: true });
     if (!all) return false;
@@ -4376,6 +4379,13 @@
   async function readAllTemplates() {
     if (uiState.running) {
       toast(false, '执行中', '等当前步骤跑完再改设置');
+      return;
+    }
+    // 设置区的「读取模板列表」不是写入口，但会读选中集/开弹窗；在采集箱页也要过未发布守卫
+    try {
+      assertReadAllContext('读取模板列表');
+    } catch (e) {
+      toast(false, '已中止', e.message);
       return;
     }
     const btn = refs.setReadTpl;
@@ -4482,7 +4492,7 @@
 
     /* 三类模板下拉（直接显示真实模板名）+ 读取按钮。
        v1.8.0 起没有「模板预设」开关：下拉里选中的模板就是步骤执行时用的模板，改动即时落盘 */
-    const fields = el('div', 'set-tpl-fields');
+    const fields = el('div');
     refs.tplSelects = {};
     TPL_KEYS.forEach(({ key, label }) => {
       const f = buildTplField(key, label);
@@ -4539,7 +4549,6 @@
     refs.setWordsChips = chips;
     refs.setWordsBody = wordsBody;
     refs.setWordsBtn = wordsBtn;
-    refs.setImportTa = importTa;
     return box;
   }
 
@@ -4560,18 +4569,18 @@
   }
 
   /** 齿轮：在「设置页」与「执行页」之间切换；执行中不允许切（避免和页面交互抢焦点） */
-  function toggleView(force) {
+  function toggleView() {
     if (!refs.settings) return;
     if (uiState.running) {
       toast(false, '执行中', '等当前步骤跑完再切');
       return;
     }
-    const toSettings = typeof force === 'boolean' ? force : (uiState.view !== 'settings');
+    const toSettings = uiState.view !== 'settings';
     const nextView = toSettings ? 'settings' : 'run';
     if (nextView !== uiState.view) {
       uiState.view = nextView;
       // 视图也持久化（刷新后停在上次那一页）。但**只在真的切换时写** ——
-      // 重建路径（restorePersistedUi）会直接塞 uiState.view 再调 applyView()，
+      // 重建路径（buildPanel）会直接读持久化值再调 applyView()，
       // 那里不能顺手落盘，否则「只读缓存」变成了「写缓存」。
       saveUiState({ view: nextView });
     }
@@ -4887,7 +4896,6 @@
     refs.setWordsChips = null;
     refs.setWordsBody = null;
     refs.setWordsBtn = null;
-    refs.setImportTa = null;
     boot();
   }, 800);   // 500→800ms：够快让人察觉不到面板消失，也不会和页面自己的重渲染抢节奏
 })();
