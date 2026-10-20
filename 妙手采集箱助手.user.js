@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.17.1
+// @version      1.17.2
 // @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.17.1';
+  const SCRIPT_VERSION = '1.17.2';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -3843,11 +3843,9 @@
     .wm-delta .is-add { color: #1E8E3E; }
     .wm-delta .is-del { color: #D70015; }
     .wm-delta .is-order { color: var(--ink-3); }
-    /* 操作行**始终占位**（min-height），只在悬停/选中/聚焦时显形 —— 不然鼠标划过整列会上下跳 */
-    .wm-item-acts { display: flex; align-items: center; gap: 4px; min-height: 17px; margin-top: 3px; visibility: hidden; }
-    .wm-item:hover .wm-item-acts,
-    .wm-item:focus-within .wm-item-acts,
-    .wm-item.is-sel .wm-item-acts { visibility: visible; }
+    /* v1.17.2：行内操作按钮（恢复 / 导出）已去掉，这组「悬停才显形」的空位规则随之作废。
+       .wm-mini 现在只活在工具条里，隐藏统一用 is-hidden。 */
+    .wm-mini.is-hidden { display: none; }
     .wm-mini {
       border: none;
       padding: 2px 6px;
@@ -3864,6 +3862,11 @@
 
     /* 顶部：分段控件 + 搜索 */
     .wm-top { display: flex; align-items: center; gap: 8px; padding: 2px 0 8px; }
+
+    /* 编辑页的「识别 N 词」：和分段控件同一行、靠最右（v1.17.2 从正文里提上来） */
+    /* 权重要比后面的 .wm-info（flex:1）高，否则盒子会被拉满整行 —— 用 .wm-top 前缀压住 */
+    .wm-top .wm-top-info { flex: none; margin-left: auto; justify-content: flex-end; }
+    .wm-top .wm-top-info.is-hidden { display: none; }
     .wm-tabs { display: flex; gap: 2px; flex: none; padding: 2px; border-radius: var(--r-sm); background: var(--fill-1); }
     .wm-tab {
       border: none; background: transparent;
@@ -3880,6 +3883,7 @@
       color: var(--ink);
       box-shadow: var(--sh-1), inset 0 0 0 0.5px var(--line-soft);
     }
+    .wm-tab.is-hidden { display: none; }
     .wm-search {
       display: flex; align-items: center; gap: 5px;
       flex: 1; min-width: 0; max-width: 250px;
@@ -5060,7 +5064,9 @@
       paintDiffPane(n);
     });
     searchWrap.append(ico, searchInput);
-    top.append(tabs, searchWrap);
+    /* 编辑页的「识别 N 词」放到顶部这一行的最右（v1.17.2）：不占正文高度，也不跟按钮抢位置 */
+    const editMeta = el('div', 'wm-info wm-top-info is-hidden', '');
+    top.append(tabs, searchWrap, editMeta);
     main.appendChild(top);
 
     /* —— 差异页：基准 A → 对比 B —— */
@@ -5103,14 +5109,28 @@
     const wordsBar = el('div', 'wm-bar');
     const wordsInfo = el('div', 'wm-info', '');
     const wordsActs = el('div', 'wm-acts');
+    /* 「恢复为当前」只在看历史版时出现（v1.17.2：从版本行挪到这里，行内不再挂按钮） */
+    const btnRestore = el('button', 'wm-mini is-hidden', '恢复为当前');
+    const btnCancelRestore = el('button', 'wm-mini is-hidden', '取消');
     const btnCopy = el('button', 'wm-mini', '复制');
     const btnTxt = el('button', 'wm-mini', '导出 TXT');
-    [btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
+    [btnRestore, btnCancelRestore, btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
     btnCopy.title = '复制当前这一版的词（逗号分隔，可直接粘到别处）';
     btnTxt.title = '把当前这一版导出为 TXT：逗号分隔、不带 BOM，可原样再粘回编辑框';
+    btnRestore.addEventListener('click', () => {
+      const v = viewedWordVersion();
+      if (!v) return;
+      if (wordsModalState.confirmId === v.id) { doRestore(v.id); return; }
+      startRestoreConfirm(v.id);
+    });
+    btnCancelRestore.addEventListener('click', () => {
+      clearConfirmTimer();
+      wordsModalState.confirmId = 0;
+      renderWordsModal();
+    });
     btnCopy.addEventListener('click', () => copyWordVersion(viewedWordVersion()));
     btnTxt.addEventListener('click', () => exportWordVersion(viewedWordVersion()));
-    wordsActs.append(btnCopy, btnTxt);
+    wordsActs.append(btnRestore, btnCancelRestore, btnCopy, btnTxt);
     wordsBar.append(wordsInfo, wordsActs);
     const chipsBox = el('div', 'word-chips wm-chips');
     paneWords.append(wordsBar, chipsBox);
@@ -5126,7 +5146,6 @@
       wordsModalState.dirty = true;
       paintEditMeta(refs.wordsModal);
     });
-    const editMeta = el('div', 'wm-info', '');
     const editDiff = el('div', 'wm-pane-body');
     const editBar = el('div', 'wm-bar wm-edit-bar');
     const btnReset = el('button', 'wm-btn is-plain', '还原为当前词库');
@@ -5142,7 +5161,7 @@
     btnSave.type = 'button';
     btnSave.addEventListener('click', () => saveDraftWords());
     editBar.append(btnReset, btnSave);
-    paneEdit.append(editTa, editMeta, editDiff, editBar);
+    paneEdit.append(editTa, editDiff, editBar);
 
     main.append(paneDiff, paneWords, paneEdit);
     bodyEl.append(side, main);
@@ -5155,7 +5174,7 @@
       overlay, card, meta, side, main, tabBtns, searchWrap, searchInput,
       paneDiff, diffBody, aField, bField, keptToggle, optMap: new Map(),
       paneWords, wordsInfo, chipsBox,
-      paneEdit, editTa, editMeta, editDiff, btnSave, btnReset
+      paneEdit, editTa, editMeta, editDiff, btnSave, btnReset, btnRestore, btnCancelRestore
     };
 
     closeX.addEventListener('click', () => closeWordsModal());
@@ -5228,10 +5247,19 @@
     }
   }
 
+  /** 正在看的是不是「历史版」（不是当前生效那版）—— 历史版只读：没有「编辑」页 */
+  function isViewingHistory() {
+    const v = viewedWordVersion();
+    const cur = activeWordVersion();
+    return !!(v && cur && v.id !== cur.id);
+  }
+
   function renderWordsModal() {
     const n = refs.wordsModal;
     refreshWordsBtn();                        // 面板按钮上的 N 词 / 版数始终同步
     if (!n || !wordsModalState.open) return;
+    // 历史版只读：停在「编辑」时退回「词库」，免得出现"正在编辑历史版"的错觉
+    if (wordsModalState.tab === 'edit' && isViewingHistory()) wordsModalState.tab = 'words';
     paintModalHead(n);
     paintVersionList(n);
     paintTabState(n);
@@ -5242,20 +5270,25 @@
 
   function paintModalHead(n) {
     const cur = activeWordVersion();
-    n.meta.textContent = settings.deleteWords.length + ' 词 · '
-      + wordsStore.list.length + '/' + WORDS_MAX_VERSIONS + ' 版'
+    // v1.17.2：去掉「3/10 版」—— 版本总数对用户没意义，还挤占「最新」那条信息
+    n.meta.textContent = settings.deleteWords.length + ' 词'
       + (cur
         ? ' · 最新 ' + fmtVersionTime(cur.at, 'full') + '（' + fmtVersionTime(cur.at, 'rel') + '）'
         : ' · 还没有版本');
   }
 
   function paintTabState(n) {
+    const hist = isViewingHistory();
     Object.keys(n.tabBtns).forEach((k) => {
       const on = wordsModalState.tab === k;
       n.tabBtns[k].classList.toggle('is-on', on);
       n.tabBtns[k].setAttribute('aria-selected', on ? 'true' : 'false');
+      // 历史版只读：整颗「编辑」标签页不显示（不是禁用 —— 禁用会让人以为自己点错了）
+      n.tabBtns[k].classList.toggle('is-hidden', k === 'edit' && hist);
     });
     n.searchWrap.classList.toggle('is-hidden', wordsModalState.tab === 'edit');
+    // 编辑页的「识别 N 词」挪到了顶部那一行，只在编辑页显示
+    n.editMeta.classList.toggle('is-hidden', wordsModalState.tab !== 'edit');
     n.paneDiff.classList.toggle('is-hidden', wordsModalState.tab !== 'diff');
     n.paneWords.classList.toggle('is-hidden', wordsModalState.tab !== 'words');
     n.paneEdit.classList.toggle('is-hidden', wordsModalState.tab !== 'edit');
@@ -5263,6 +5296,7 @@
 
   function setWordsModalTab(tab) {
     if (wordsModalState.tab === tab) return;
+    if (tab === 'edit' && isViewingHistory()) return;      // 历史版没有编辑页
     wordsModalState.tab = tab;
     if (tab === 'edit' && !wordsModalState.dirty) {
       wordsModalState.draft = settings.deleteWords.join(',');
@@ -5276,7 +5310,11 @@
     }
   }
 
-  /** 点某一版：标记为选中；在差异页时顺带把它设成「对比 B」（A 自动取它上一版） */
+  /**
+   * 点某一版：**一次点击**就切到这一版的页面（v1.17.2）。
+   * 原来点历史版只改选中态，得再点一次才会看到内容 —— 现在直接落到「词库」页；
+   * 在「对比」页则顺带把它设成「对比 B」（A 自动取它上一版）。
+   */
   function selectWordVersion(id) {
     const ver = findWordVersion(id);
     if (!ver) return;
@@ -5287,19 +5325,22 @@
       wordsModalState.bId = id;
       wordsModalState.aId = prev ? prev.id : id;
     }
+    // 停在「编辑」时点历史版 → 切到「词库」（历史版没有编辑页），一次点击即见效
+    const cur = activeWordVersion();
+    if (wordsModalState.tab === 'edit' && (!cur || cur.id !== id)) wordsModalState.tab = 'words';
     renderWordsModal();
   }
 
   function startRestoreConfirm(id) {
     wordsModalState.confirmId = id;
     clearConfirmTimer();
-    // 不弹二级确认框：就地变成「确认恢复 / 取消」，6 秒后自动退回
+    // 不弹二级确认框：按钮就地变成「确认恢复 / 取消」，6 秒后自动退回
     wordsModalState.confirmTimer = setTimeout(() => {
       wordsModalState.confirmId = 0;
       wordsModalState.confirmTimer = 0;
-      paintVersionList(refs.wordsModal);
+      renderWordsModal();          // 恢复按钮在「词库」页工具条里，重绘整窗最省心
     }, 6000);
-    paintVersionList(refs.wordsModal);
+    renderWordsModal();
   }
 
   /** 恢复某一版 = **生成一个新版本**（历史 append-only：误恢复后还能找回来） */
@@ -5310,7 +5351,7 @@
     wordsModalState.confirmId = 0;
     const before = settings.deleteWords.slice();
     if (!commitWords(ver.words, 'restore', '恢复自 #' + ver.id)) {
-      paintVersionList(refs.wordsModal);
+      renderWordsModal();          // 失败也只重绘，别把弹窗留在半截状态
       return;
     }
     const d = diffWords(before, settings.deleteWords);
@@ -5387,41 +5428,12 @@
         if (!d.added.length && !d.removed.length && d.orderOnly) delta.appendChild(el('b', 'is-order', '⇅'));
         botRow.appendChild(delta);
       }
-      const acts = el('div', 'wm-item-acts');
-      if (wordsModalState.confirmId === ver.id) {
-        const yes = el('button', 'wm-mini is-danger', '确认恢复');
-        yes.type = 'button';
-        yes.addEventListener('click', (e) => { e.stopPropagation(); doRestore(ver.id); });
-        const no = el('button', 'wm-mini', '取消');
-        no.type = 'button';
-        no.addEventListener('click', (e) => {
-          e.stopPropagation();
-          clearConfirmTimer();
-          wordsModalState.confirmId = 0;
-          paintVersionList(refs.wordsModal);
-        });
-        acts.append(yes, no);
-      } else {
-        if (!isCur) {
-          const rBtn = el('button', 'wm-mini', '恢复');
-          rBtn.type = 'button';
-          rBtn.title = '把这一版重新设为当前词库（会生成一个新版本，历史不删）';
-          rBtn.addEventListener('click', (e) => { e.stopPropagation(); startRestoreConfirm(ver.id); });
-          acts.appendChild(rBtn);
-        }
-        const eBtn = el('button', 'wm-mini', '导出');
-        eBtn.type = 'button';
-        eBtn.title = '导出这一版为 TXT（逗号分隔、无 BOM，可直接粘回编辑框）';
-        eBtn.addEventListener('click', (e) => { e.stopPropagation(); exportWordVersion(ver); });
-        acts.appendChild(eBtn);
-      }
+      /* v1.17.2：行内不再挂「恢复 / 导出」——
+         恢复挪到「词库」页工具条（只对历史版出现），导出那里本来就有「导出 TXT」。
+         行内零按钮，也就不再需要"悬停才显形"的占位行（行高不再随鼠标跳）。 */
       row.append(topRow);
       if (hasDelta) row.appendChild(botRow);
-      row.appendChild(acts);
-      row.addEventListener('click', (e) => {
-        if (e.target && e.target.closest && e.target.closest('.wm-item-acts')) return;
-        selectWordVersion(ver.id);
-      });
+      row.addEventListener('click', () => selectWordVersion(ver.id));
       row.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectWordVersion(ver.id); }
       });
@@ -5438,6 +5450,16 @@
   function paintWordsPane(n) {
     if (!n) return;
     const ver = viewedWordVersion();
+    /* 「恢复为当前」只在看历史版时出现；点一次变「确认恢复」，6 秒自动退回。
+       v1.17.2：原来每行都挂「恢复 / 导出」，悬停才显形导致行高跳动，当前版那行还多一个没用的「导出」。 */
+    const confirming = !!(ver && wordsModalState.confirmId === ver.id);
+    n.btnRestore.classList.toggle('is-hidden', !isViewingHistory());
+    n.btnCancelRestore.classList.toggle('is-hidden', !confirming);
+    n.btnRestore.classList.toggle('is-danger', confirming);
+    n.btnRestore.textContent = confirming ? '确认恢复' : '恢复为当前';
+    n.btnRestore.title = confirming
+      ? '再点一次就把这一版设为当前词库（会生成新版本，历史不删）'
+      : '把这一版重新设为当前词库（会生成一个新版本，历史不删）';
     n.chipsBox.textContent = '';
     if (!ver) {
       n.wordsInfo.textContent = '还没有版本';

@@ -41,7 +41,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.17.1，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.17.2，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `README.md` | 门面：安装 / 用法 / 三条红线 / 自检命令 / 当前版本变更摘要 |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
@@ -55,7 +55,7 @@
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.17.1，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.17.2，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -71,7 +71,7 @@
 | 主按钮 | 「一键编辑」↔ 运行中「停止编辑 · 12s」（按钮内实时计时），两态无边框不发光，可随时中断 |
 | 设置区 | 三类模板下拉（自绘）+「读取模板列表」**三条链路各自直连**（失败自动回落开弹窗） |
 | 词库 | v1.17.0：只有 `commitWords()` 能改它（弹窗「保存为新版本」/ 恢复历史）；执行侧只读 `settings.deleteWords` |
-| 词库版本库 | 居中弹窗 + 遮罩：最近 10 版（带时间戳）、任意两版 diff（按词集合 · 大小写敏感）、版本内搜索、按版本导出 TXT、编辑页实时差异；右栏三段顺序为 **词库 / 编辑 / 对比**，默认停在「词库」。存储 `localStorage['msxb-words-v1']`；**不变量：最新版 === `settings.deleteWords`**（加载后 + 每次开跑前对账，方向只有「实际值 → 历史」） |
+| 词库版本库 | 居中弹窗 + 遮罩：最近 10 版（带时间戳）、任意两版 diff（按词集合 · 大小写敏感）、版本内搜索、按版本导出 TXT、编辑页实时差异；右栏三段顺序为 **词库 / 编辑 / 对比**，默认停在「词库」；**看历史版时只读**（「编辑」标签页隐藏），版本行内**零按钮**（恢复/导出都在「词库」页工具条）。存储 `localStorage['msxb-words-v1']`；**不变量：最新版 === `settings.deleteWords`**（加载后 + 每次开跑前对账，方向只有「实际值 → 历史」） |
 | 落库复核 | 每步保存后调接口核对结果（v1.15.0，见 §5.6） |
 | 等待策略 | v1.16.0：新判据一律「条件等待 + **连续两次采样成立**」(`waitStable`)，超时**抛错不吞**；提速只来自去掉空等 |
 | 版本检测 | 每次刷新比对 GreasyFork `/scripts/600852.json`，不一致显示「更新」 |
@@ -260,6 +260,7 @@ makeTitleBuilder 标题改写纯函数（预览改写与落库复核共用同一
                   open·closeWordsModal / renderWordsModal / paintModalHead / paintVersionList
                   paintTabState / paintWordsPane（含搜索高亮 fillHighlight）/ paintDiffPane
                   paintEditMeta / setWordsModalTab / selectWordVersion / startRestoreConfirm
+                  isViewingHistory（历史版只读判定：决定「编辑」标签页显不显示、恢复按钮出不出现）
                   doRestore / saveDraftWords / exportWordVersion / copyWordVersion
 uiPersist         loadUiState / saveUiState / setCollapsed（localStorage['msxb-ui-v1']）
 timer             startTimer / stopTimer（只改 .main-btn-time，不触发整面板重排）
