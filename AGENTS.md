@@ -311,6 +311,17 @@ git -c http.proxy=http://127.0.0.1:7897 push  origin main
 ```
 
 > 若代理端口变了：`Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Select ProxyServer`
+>
+> ⚠ **2026-10-20 复验：代理不是万能钥匙，先试直连。** 当天 `127.0.0.1:7897` 在监听，
+> 但对 github 报 `TLS connect error / schannel: failed to receive handshake`（curl 同样失败），
+> 而**直连 `https://github.com` 返回 200** —— 于是这一天的正确做法是**不带代理**：
+>
+> ```powershell
+> git -c http.proxy= -c https.proxy= push origin main     # 先直连（今天的成功路径）
+> # 直连不通再挂代理：
+> $env:HTTPS_PROXY = "http://127.0.0.1:7897"
+> git -c http.proxy=http://127.0.0.1:7897 push origin main
+> ```
 
 ### 入库范围
 
