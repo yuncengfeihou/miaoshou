@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         妙手ERP · TEMU全托管采集箱 批量处理助手
 // @namespace    https://erp.91miaoshou.com/
-// @version      1.17.0
-// @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT/CSV/JSON、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
+// @version      1.17.1
+// @description  iOS 风格浮动面板（自绘 Apple 风格下拉，非原生 select，圆角触发框 + 毛玻璃浮层菜单）：自动完成「产品 → TEMU全托管 → 采集箱」导航，再执行分步流程（模板引用、标题清理、尺码表、模特信息、颜色图填充+混合色）。设置区：三类模板选中即生效（无开关）；「读取模板列表」走直连接口（产品、SKU、尺码表三处各自独立直连，失败自动回落开弹窗），词库改为**居中弹窗**管理（遮罩 + 居中卡片）：版本留档（只保留最近 10 次、带时间戳）、任意两版 diff 对比（按词集合、大小写敏感）、版本内搜索、按版本导出 TXT、编辑后点「保存为新版本」才写盘；**执行时用的永远是最新那一版**。主按钮「一键编辑」，运行中变为「停止编辑」并在按钮内计时，可随时中断当前步骤。面板位置 / 折叠 / 视图跨刷新保持。**只在「未发布」列表工作，全程不发布产品。**
 // @author       -
 // @match        https://erp.91miaoshou.com/pddkj/collect_box/items*
 // @match        https://erp.91miaoshou.com/*
@@ -41,7 +41,7 @@
   'use strict';
 
   /** 脚本版本：用于识别/接管 Tampermonkey 里可能残留的旧版面板 */
-  const SCRIPT_VERSION = '1.17.0';
+  const SCRIPT_VERSION = '1.17.1';
 
   /** 取元素可视文本 */
   const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
@@ -3760,15 +3760,15 @@
     .wm-x {
       flex: none;
       width: 22px; height: 22px; margin-top: -1px;
-      border: none; border-radius: 50%;
-      background: var(--fill-2);
-      color: var(--ink-2);
-      font-family: inherit; font-size: 14px; line-height: 1;
+      border: none; border-radius: var(--r-xs);
+      /* v1.17.1：去掉灰色圆圈底，只留一个 × 字 */
+      background: transparent;
+      color: var(--ink-3);
+      font-family: inherit; font-size: 15px; line-height: 1;
       cursor: pointer;
-      transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
-        transform var(--t-fast) var(--ease);
+      transition: color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
     }
-    .wm-x:hover { background: var(--fill-3); color: var(--ink); }
+    .wm-x:hover { background: transparent; color: var(--ink); }
     .wm-x:active { transform: scale(0.94); }
 
     /* 主体：左时间线 + 右内容 */
@@ -3809,10 +3809,20 @@
       transition: background-color var(--t-fast) var(--ease);
     }
     .wm-item:hover { background: var(--fill-1); }
+    /* 「当前生效版」与「历史版」一眼分开：当前＝淡蓝底 + 淡蓝细边 + 蓝 id；历史＝白底、id 用次要色。
+       选中（is-sel）再叠一条左侧蓝条，两者可以同时成立。 */
+    .wm-item.is-cur {
+      background: rgba(10, 132, 255, 0.07);
+      box-shadow: inset 0 0 0 0.5px rgba(10, 132, 255, 0.18);
+    }
+    .wm-item.is-cur:hover { background: rgba(10, 132, 255, 0.11); }
     .wm-item.is-sel { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
+    .wm-item.is-cur.is-sel { background: rgba(10, 132, 255, 0.13); }
     .wm-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-line); }
     .wm-item-top { display: flex; align-items: center; gap: 5px; }
     .wm-id { font-size: 11px; font-weight: 650; color: var(--ink); }
+    .wm-item.is-cur .wm-id { color: var(--accent-deep); }
+    .wm-item:not(.is-cur) .wm-id { color: var(--ink-2); }
     .wm-cur {
       font-size: 9px; font-weight: 650;
       color: var(--accent-deep);
@@ -3821,8 +3831,14 @@
       padding: 0 4px;
     }
     .wm-time { margin-left: auto; font-size: 9.5px; font-weight: 500; color: var(--ink-3); }
-    .wm-item-bot { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+    /* 词条数紧随「当前」胶囊（不再单独占第二行）；第二行只放变更摘要 */
     .wm-count { font-size: 10px; font-weight: 500; color: var(--ink-2); }
+    .wm-item.is-cur .wm-count { color: var(--accent-deep); opacity: 0.8; }
+    .wm-item-bot { display: flex; align-items: center; gap: 6px; margin-top: 2px; min-height: 12px; }
+    /* 当前版与历史版之间的区隔线（带「历史」字样） */
+    .wm-sep { display: flex; align-items: center; gap: 6px; margin: 1px 0 5px; padding: 0 4px; }
+    .wm-sep::before, .wm-sep::after { content: ''; flex: 1; border-top: 0.5px solid var(--line); }
+    .wm-sep span { font-size: 9px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.3px; }
     .wm-delta { display: flex; gap: 4px; margin-left: auto; font-size: 9.5px; font-weight: 650; }
     .wm-delta .is-add { color: #1E8E3E; }
     .wm-delta .is-del { color: #D70015; }
@@ -3874,7 +3890,8 @@
       box-shadow: inset 0 0 0 0.5px var(--line);
       transition: box-shadow var(--t-fast) var(--ease);
     }
-    .wm-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent-line), 0 0 0 3px var(--accent-tint); }
+    /* 聚焦只把外圈描边点亮成浅蓝：不加光晕、不加内描边（v1.17.1 按用户要求精简） */
+    .wm-search:focus-within { box-shadow: 0 0 0 1px var(--accent-line); }
     .wm-search.is-hidden { display: none; }
     .wm-search-ico { flex: none; display: flex; width: 11px; height: 11px; color: var(--ink-3); }
     .wm-search-ico svg { display: block; width: 11px; height: 11px; }
@@ -3955,7 +3972,15 @@
     .wm-hit { background: rgba(255, 204, 0, 0.38); color: inherit; border-radius: 3px; padding: 0 1px; }
 
     /* 词条页 */
-    .wm-chips { flex: 1; min-height: 0; max-height: none; }
+    /* 词条胶囊：flex 换行时**不能让行被拉伸** —— align-content 默认是 stretch，
+       容器越高每行就被撑得越高（看起来就是"胶囊特别高"）。钉成 flex-start 后，
+       胶囊高度只由自身 padding + line-height 决定（约 18px）。 */
+    .wm-chips {
+      flex: 1; min-height: 0; max-height: none;
+      align-content: flex-start;
+      align-items: flex-start;
+      padding: 7px 7px;
+    }
     .wm-info { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; font-size: 10px; font-weight: 500; color: var(--ink-2); min-height: 16px; }
     .wm-acts { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 
@@ -4003,18 +4028,8 @@
       transform: none;
     }
 
-    /* 底 */
-    .wm-foot {
-      display: flex; align-items: center; gap: 6px;
-      padding: 9px 12px 11px 16px;
-      border-top: 0.5px solid var(--line-soft);
-    }
-    .wm-foot-hint {
-      flex: 1; min-width: 0;
-      font-size: 9.5px; color: var(--ink-3);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .wm-foot-gap { flex: none; width: 2px; }
+    /* 弹窗底栏已删除（v1.17.1）：原来的「导出全部（JSON）/ 关闭」是多余的 ——
+       关闭用右上角 ×（Esc / 点遮罩也能关），导出只用每个版本自己的「复制 / TXT」。 */
 
     /* 空态 / 提示 */
     .wm-empty { padding: 10px 6px; font-size: 10.5px; line-height: 1.65; color: var(--ink-3); }
@@ -4030,7 +4045,8 @@
 
     /* 键盘聚焦：新控件沿用系统蓝描边 */
     .wm-x:focus-visible, .wm-tab:focus-visible, .wm-mini:focus-visible, .wm-btn:focus-visible,
-    .wm-check:focus-visible, .wm-search-input:focus-visible, .wm-ta:focus-visible {
+    /* 注意：搜索框**不**在这个列表里 —— 它的聚焦态由 .wm-search:focus-within 单独处理（只点亮外圈） */
+    .wm-check:focus-visible, .wm-ta:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--accent-line), 0 2px 6px rgba(10, 132, 255, 0.18);
     }
@@ -4665,6 +4681,14 @@
   /** 当前生效的版本（＝最新版；由不变量保证它就是 settings.deleteWords 那一份） */
   function activeWordVersion() { return wordsStore.list[0] || null; }
 
+  /**
+   * 界面「正在看」的那一版：优先左侧时间线里选中的版本，选中的被裁掉时回落到当前生效版。
+   * 「词库」页显示什么、复制/导出取什么，**都走这一个函数** —— 所见即所得，不会各取各的。
+   */
+  function viewedWordVersion() {
+    return findWordVersion(wordsModalState.selId) || activeWordVersion();
+  }
+
   /** 读版本库 → 校验 → 裁剪 → 立刻对账。坏数据只丢那一条，绝不让它传染执行侧。 */
   function loadWordStore() {
     let broken = false;
@@ -4834,7 +4858,7 @@
    */
   const wordsModalState = {
     open: false,
-    tab: 'diff',          // 'diff' 差异 ｜ 'words' 词条 ｜ 'edit' 编辑
+    tab: 'words',         // 'words' 词库 ｜ 'edit' 编辑 ｜ 'diff' 对比（默认停在第一个）
     selId: 0,             // 右栏正在看的版本（词条页 / 导出目标）
     aId: 0,               // 差异页「基准 A」
     bId: 0,               // 差异页「对比 B」
@@ -4908,28 +4932,10 @@
   /* ---------- 词库管理弹窗：导出 / 复制 ---------- */
 
   /**
-   * TXT **不带 BOM**：带 BOM 的文件再粘回编辑框会变成「\uFEFF短袖」，round-trip 就坏了。
-   * Excel 友好是另一回事 —— 那个用 CSV（带 BOM）。
+   * TXT **不带 BOM**：带 BOM 的文件再粘回编辑框会多出一个 \uFEFF，round-trip 就坏了。
+   * 只保留这一种导出格式（v1.17.1 去掉 CSV / JSON：日常只需要"能再粘回去"的那一份）。
    */
   function wordsTxt(words) { return (words || []).join(','); }
-
-  function wordsCsv(words) {
-    return '\uFEFF' + (words || [])
-      .map((w) => '"' + String(w).replace(/"/g, '""') + '"')
-      .join('\r\n') + '\r\n';
-  }
-
-  function versionJson(ver) {
-    return JSON.stringify({
-      id: ver.id,
-      at: ver.at,
-      time: fmtVersionTime(ver.at, 'full'),
-      count: ver.words.length,
-      reason: ver.reason,
-      note: ver.note,
-      words: ver.words
-    }, null, 2) + '\n';
-  }
 
   function downloadText(name, text, mime) {
     try {
@@ -4950,40 +4956,15 @@
     }
   }
 
-  /** 导出一版：format = 'txt'（可原样粘回）｜'csv'（Excel）｜'json'（含元数据） */
-  function exportWordVersion(ver, format) {
-    if (!ver) { toast(false, '没有可导出的版本', '先在列表里选一版'); return false; }
+  /**
+   * 导出一版（只有 TXT）：**永远导出传进来的那一版** ——
+   * 也就是「词库」页面上正在显示的那一份（`viewedWordVersion()`），不会偷偷换成别的版本。
+   */
+  function exportWordVersion(ver) {
+    if (!ver) { toast(false, '没有可导出的版本', '先在左侧选一版'); return false; }
     const base = '词库_v' + ver.id + '_' + stampForFile(ver.at);
-    const fmt = format || 'txt';
-    if (fmt === 'csv') downloadText(base + '.csv', wordsCsv(ver.words), 'text/csv;charset=utf-8');
-    else if (fmt === 'json') downloadText(base + '.json', versionJson(ver), 'application/json');
-    else downloadText(base + '.txt', wordsTxt(ver.words), 'text/plain;charset=utf-8');
-    toast(true, '已导出 #' + ver.id, ver.words.length + ' 词 · ' + fmt.toUpperCase());
-    return true;
-  }
-
-  /** 全部版本一次性导出（备份 / 换机） */
-  function exportAllWordVersions() {
-    if (!wordsStore.list.length) { toast(false, '没有可导出的版本', '版本库为空'); return false; }
-    const payload = {
-      script: '妙手采集箱助手',
-      version: SCRIPT_VERSION,
-      exportedAt: fmtVersionTime(Date.now(), 'full'),
-      maxVersions: WORDS_MAX_VERSIONS,
-      active: settings.deleteWords,
-      versions: wordsStore.list.map((v) => ({
-        id: v.id,
-        at: v.at,
-        time: fmtVersionTime(v.at, 'full'),
-        count: v.words.length,
-        reason: v.reason,
-        note: v.note,
-        words: v.words
-      }))
-    };
-    downloadText('词库备份_' + stampForFile(Date.now()) + '.json',
-      JSON.stringify(payload, null, 2) + '\n', 'application/json');
-    toast(true, '已导出全部版本', wordsStore.list.length + ' 版 · JSON');
+    if (!downloadText(base + '.txt', wordsTxt(ver.words), 'text/plain;charset=utf-8')) return false;
+    toast(true, '已导出 #' + ver.id, ver.words.length + ' 词 · ' + fmtVersionTime(ver.at, 'short'));
     return true;
   }
 
@@ -5052,7 +5033,7 @@
     const tabs = el('div', 'wm-tabs');
     tabs.setAttribute('role', 'tablist');
     const tabBtns = {};
-    [['diff', '差异'], ['words', '词条'], ['edit', '编辑']].forEach((pair) => {
+    [['words', '词库'], ['edit', '编辑'], ['diff', '对比']].forEach((pair) => {
       const b = el('button', 'wm-tab', pair[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -5123,20 +5104,13 @@
     const wordsInfo = el('div', 'wm-info', '');
     const wordsActs = el('div', 'wm-acts');
     const btnCopy = el('button', 'wm-mini', '复制');
-    const btnTxt = el('button', 'wm-mini', 'TXT');
-    const btnCsv = el('button', 'wm-mini', 'CSV');
-    const btnJson = el('button', 'wm-mini', 'JSON');
-    [btnCopy, btnTxt, btnCsv, btnJson].forEach((b) => { b.type = 'button'; });
-    btnCopy.title = '复制这一版的词（逗号分隔，可直接粘到别处）';
-    btnTxt.title = '导出 TXT：逗号分隔、不带 BOM，可原样再粘回编辑框';
-    btnCsv.title = '导出 CSV：单列 + BOM，Excel 打开不乱码';
-    btnJson.title = '导出 JSON：含版本号 / 时间戳 / 词条，便于备份';
-    const selVersion = () => findWordVersion(wordsModalState.selId) || activeWordVersion();
-    btnCopy.addEventListener('click', () => copyWordVersion(selVersion()));
-    btnTxt.addEventListener('click', () => exportWordVersion(selVersion(), 'txt'));
-    btnCsv.addEventListener('click', () => exportWordVersion(selVersion(), 'csv'));
-    btnJson.addEventListener('click', () => exportWordVersion(selVersion(), 'json'));
-    wordsActs.append(btnCopy, btnTxt, btnCsv, btnJson);
+    const btnTxt = el('button', 'wm-mini', '导出 TXT');
+    [btnCopy, btnTxt].forEach((b) => { b.type = 'button'; });
+    btnCopy.title = '复制当前这一版的词（逗号分隔，可直接粘到别处）';
+    btnTxt.title = '把当前这一版导出为 TXT：逗号分隔、不带 BOM，可原样再粘回编辑框';
+    btnCopy.addEventListener('click', () => copyWordVersion(viewedWordVersion()));
+    btnTxt.addEventListener('click', () => exportWordVersion(viewedWordVersion()));
+    wordsActs.append(btnCopy, btnTxt);
     wordsBar.append(wordsInfo, wordsActs);
     const chipsBox = el('div', 'word-chips wm-chips');
     paneWords.append(wordsBar, chipsBox);
@@ -5173,20 +5147,8 @@
     main.append(paneDiff, paneWords, paneEdit);
     bodyEl.append(side, main);
 
-    /* 底 */
-    const foot = el('div', 'wm-foot');
-    const footHint = el('div', 'wm-foot-hint',
-      '仅保留最近 ' + WORDS_MAX_VERSIONS + ' 次 · 按「词」比较，顺序不计 · 执行时用的永远是最新一版');
-    const btnExportAll = el('button', 'wm-btn is-plain', '导出全部（JSON）');
-    btnExportAll.type = 'button';
-    btnExportAll.title = '把全部版本导成一个 JSON 文件（备份 / 换机）';
-    btnExportAll.addEventListener('click', () => exportAllWordVersions());
-    const btnClose = el('button', 'wm-btn is-plain', '关闭');
-    btnClose.type = 'button';
-    btnClose.addEventListener('click', () => closeWordsModal());
-    foot.append(footHint, el('div', 'wm-foot-gap'), btnExportAll, btnClose);
-
-    card.append(head, bodyEl, foot);
+    // 无底栏（v1.17.1）：关闭走右上角 ×（或 Esc / 点遮罩），导出只在每个版本自己的工具条里
+    card.append(head, bodyEl);
     overlay.appendChild(card);
 
     refs.wordsModal = {
@@ -5404,17 +5366,21 @@
       const prev = wordsStore.list[i + 1] || null;         // 更旧的那一版
       const d = prev ? diffWords(prev.words, ver.words) : null;
       const isCur = !!cur && cur.id === ver.id;
-      const row = el('div', 'wm-item' + (ver.id === wordsModalState.selId ? ' is-sel' : ''));
+      const row = el('div', 'wm-item'
+        + (isCur ? ' is-cur' : '')
+        + (ver.id === wordsModalState.selId ? ' is-sel' : ''));
       row.tabIndex = 0;
       row.title = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'full') + ' · ' + ver.words.length + ' 词'
         + (ver.note ? ' · ' + ver.note : '');
       const topRow = el('div', 'wm-item-top');
       topRow.append(el('span', 'wm-id', '#' + ver.id));
       if (isCur) topRow.append(el('span', 'wm-cur', '当前'));
+      // 词条数紧跟「当前」胶囊（不再单独占第二行），时间靠右
+      topRow.append(el('span', 'wm-count', ver.words.length + ' 词'));
       topRow.append(el('span', 'wm-time', fmtVersionTime(ver.at, 'short')));
+      const hasDelta = !!(d && (d.added.length || d.removed.length || d.orderOnly));
       const botRow = el('div', 'wm-item-bot');
-      botRow.append(el('span', 'wm-count', ver.words.length + ' 词'));
-      if (d && (d.added.length || d.removed.length || d.orderOnly)) {
+      if (hasDelta) {
         const delta = el('span', 'wm-delta');
         if (d.added.length) delta.appendChild(el('b', 'is-add', '+' + d.added.length));
         if (d.removed.length) delta.appendChild(el('b', 'is-del', '−' + d.removed.length));
@@ -5446,10 +5412,12 @@
         const eBtn = el('button', 'wm-mini', '导出');
         eBtn.type = 'button';
         eBtn.title = '导出这一版为 TXT（逗号分隔、无 BOM，可直接粘回编辑框）';
-        eBtn.addEventListener('click', (e) => { e.stopPropagation(); exportWordVersion(ver, 'txt'); });
+        eBtn.addEventListener('click', (e) => { e.stopPropagation(); exportWordVersion(ver); });
         acts.appendChild(eBtn);
       }
-      row.append(topRow, botRow, acts);
+      row.append(topRow);
+      if (hasDelta) row.appendChild(botRow);
+      row.appendChild(acts);
       row.addEventListener('click', (e) => {
         if (e.target && e.target.closest && e.target.closest('.wm-item-acts')) return;
         selectWordVersion(ver.id);
@@ -5458,12 +5426,18 @@
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectWordVersion(ver.id); }
       });
       side.appendChild(row);
+      // 当前版与历史版之间插入一条带「历史」字样的区隔线（v1.17.1）
+      if (isCur && wordsStore.list.length > 1) {
+        const sep = el('div', 'wm-sep');
+        sep.appendChild(el('span', '', '历史'));
+        side.appendChild(sep);
+      }
     });
   }
 
   function paintWordsPane(n) {
     if (!n) return;
-    const ver = findWordVersion(wordsModalState.selId) || activeWordVersion();
+    const ver = viewedWordVersion();
     n.chipsBox.textContent = '';
     if (!ver) {
       n.wordsInfo.textContent = '还没有版本';
@@ -5477,7 +5451,7 @@
     n.wordsInfo.textContent = '#' + ver.id + ' · ' + fmtVersionTime(ver.at, 'short')
       + ' · ' + ver.words.length + ' 词'
       + (q ? ' · 命中 ' + list.length : '')
-      + (ver.id === ((activeWordVersion() || {}).id) ? ' · 当前生效' : '');
+      + (ver.id === ((activeWordVersion() || {}).id) ? ' · 当前生效' : ' · 历史版本');
     if (!list.length) {
       n.chipsBox.appendChild(el('div', 'word-empty',
         q ? '这一版里没有含「' + q + '」的词' : '这一版是空词库'));

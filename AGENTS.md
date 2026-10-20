@@ -41,7 +41,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.17.0，单文件、零依赖、`@grant none` |
+| `妙手采集箱助手.user.js` | **交付物**。油猴脚本 v1.17.1，单文件、零依赖、`@grant none` |
 | `步骤.md` | 知识库：能复用的坑与对策、元素定位表、操作顺序。**改脚本前先查这里** |
 | `README.md` | 门面：安装 / 用法 / 三条红线 / 自检命令 / 当前版本变更摘要 |
 | `图片1/2/3.png` | 颜色图原始图的**本地备份**（截至 2026-10-20 **仓库中不存在**，未纳入版本管理）。脚本实际用网络直链，**不读本地文件**，因此缺失不影响运行 |
@@ -55,7 +55,7 @@
 
 ## 3. 当前状态（只写"现在是什么"）
 
-**脚本 v1.17.0，10 步：0 导航 + 1 切筛选 + 2–9。**
+**脚本 v1.17.1，10 步：0 导航 + 1 切筛选 + 2–9。**
 
 | 步 | 名称 | 说明 |
 |---|---|---|
@@ -71,7 +71,7 @@
 | 主按钮 | 「一键编辑」↔ 运行中「停止编辑 · 12s」（按钮内实时计时），两态无边框不发光，可随时中断 |
 | 设置区 | 三类模板下拉（自绘）+「读取模板列表」**三条链路各自直连**（失败自动回落开弹窗） |
 | 词库 | v1.17.0：只有 `commitWords()` 能改它（弹窗「保存为新版本」/ 恢复历史）；执行侧只读 `settings.deleteWords` |
-| 词库版本库 | 居中弹窗 + 遮罩：最近 10 版（带时间戳）、任意两版 diff（按词集合 · 大小写敏感）、版本内搜索、按版本导出 TXT/CSV/JSON、编辑页实时差异。存储 `localStorage['msxb-words-v1']`；**不变量：最新版 === `settings.deleteWords`**（加载后 + 每次开跑前对账，方向只有「实际值 → 历史」） |
+| 词库版本库 | 居中弹窗 + 遮罩：最近 10 版（带时间戳）、任意两版 diff（按词集合 · 大小写敏感）、版本内搜索、按版本导出 TXT、编辑页实时差异；右栏三段顺序为 **词库 / 编辑 / 对比**，默认停在「词库」。存储 `localStorage['msxb-words-v1']`；**不变量：最新版 === `settings.deleteWords`**（加载后 + 每次开跑前对账，方向只有「实际值 → 历史」） |
 | 落库复核 | 每步保存后调接口核对结果（v1.15.0，见 §5.6） |
 | 等待策略 | v1.16.0：新判据一律「条件等待 + **连续两次采样成立**」(`waitStable`)，超时**抛错不吞**；提速只来自去掉空等 |
 | 版本检测 | 每次刷新比对 GreasyFork `/scripts/600852.json`，不一致显示「更新」 |
@@ -94,12 +94,13 @@
    ② `setAllColors` 的 `goPage` 失败只 `warn` + `continue` → **整页漏改不进 `wrongRows`**。
       **仍未修**（`test-color-coverage.mjs` 的 KNOWN 用例）；但正常业务量走不到 ——
       「未发布」≤400 条、每个分页入口先切 500 条/页 → `pages === 1`。
-6. **词库弹窗：逻辑与 DOM 交互已验证，视觉与重建路径未验。** `test-words-store.mjs` 覆盖存储 / 对账 /
-   裁剪 / diff / 配额；另外在**本地空白页**（`about:blank` 注入 `inject-body.js`，与妙手无关）跑通
-   打开弹窗 → 编辑保存生成第 2 版 → diff 行（−1 +2）→ 搜索高亮（命中 5/37）→ 恢复生成第 3 版，
-   层级实测 遮罩 3001 < 下拉 3002 < toast 3003。**未做**：① 妙手真页面（红线 3，需你同意）；
-   ② 视觉尺寸（那次窗口 viewport 是 0×0，量不到布局）；③ 面板被页面冲掉后按 `wordsModalState`
-   重建弹窗的路径 —— 这条只能在真页面触发。
+6. **词库弹窗：逻辑 + DOM + 视觉均已验，只有「妙手真页面注入」与「被冲掉后重建」没验。**
+   `test-words-store.mjs` 覆盖存储 / 对账 / 裁剪 / diff / 配额；另在**本地 HTTP 无菌页**（`127.0.0.1` 静态页 + `inject-body.js`，
+   与妙手无关、TM 不匹配）跑通完整弹窗，2026-10-20 实测：胶囊高 **16.25px**（修前被 `align-content: stretch` 拉到 ~60px）、
+   标签顺序 `词库/编辑/对比` 且默认停「词库」、**无底栏**、当前版 `is-cur` 淡蓝底 + 「历史」分隔线、
+   选历史版后信息行写「历史版本」、**导出 TXT 内容 === 选中那版**（打桩 `URL.createObjectURL` 读 Blob，无 BOM）、
+   搜索框聚焦只有 `0 0 0 1px` 一圈、× 透明底。**未做**：① 妙手真页面注入（TM 里的 1.17.0 会与本版每轮互顶，
+   见 §4 双实例互顶）；② 面板被页面冲掉后按 `wordsModalState` 重建弹窗 —— 这条只能在真页面触发。
 
 ---
 
@@ -259,7 +260,7 @@ makeTitleBuilder 标题改写纯函数（预览改写与落库复核共用同一
                   open·closeWordsModal / renderWordsModal / paintModalHead / paintVersionList
                   paintTabState / paintWordsPane（含搜索高亮 fillHighlight）/ paintDiffPane
                   paintEditMeta / setWordsModalTab / selectWordVersion / startRestoreConfirm
-                  doRestore / saveDraftWords / exportWordVersion / exportAllWordVersions
+                  doRestore / saveDraftWords / exportWordVersion / copyWordVersion
 uiPersist         loadUiState / saveUiState / setCollapsed（localStorage['msxb-ui-v1']）
 timer             startTimer / stopTimer（只改 .main-btn-time，不触发整面板重排）
 
